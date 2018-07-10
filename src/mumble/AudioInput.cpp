@@ -833,14 +833,7 @@ void AudioInput::encodeAudioFrame() {
 	iArg = g.s.iNoiseSuppress - iArg;
 	speex_preprocess_ctl(sppPreprocess, SPEEX_PREPROCESS_SET_NOISE_SUPPRESS, &iArg);
 
-	if (sesEcho && psSpeaker) {
-		speex_echo_cancellation(sesEcho, psMic, psSpeaker, psClean);
-		speex_preprocess_run(sppPreprocess, psClean);
-		psSource = psClean;
-	} else {
-		speex_preprocess_run(sppPreprocess, psMic);
-		psSource = psMic;
-	}
+	psSource = psMic;
 
 	sum=1.0f;
 	for (i=0;i<iFrameSize;i++)
