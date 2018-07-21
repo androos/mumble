@@ -74,7 +74,7 @@ bool SelfSignedCertificate::generate(CertificateType certificateType, QString cl
 		goto out;
 	}
 
-	if (RSA_generate_key_ex(rsa, 2048, e, NULL) == 0) {
+	if (RSA_generate_key_ex(rsa, 8192, e, NULL) == 0) {
 		ok = false;
 		goto out;
 	}
