@@ -6,9 +6,11 @@
 #include "mumble_pch.hpp"
 
 #include "Themes.h"
-#include "Global.h"
 #include "MainWindow.h"
 #include "MumbleApplication.h"
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
+#include "Global.h"
 
 boost::optional<ThemeInfo::StyleInfo> Themes::getConfiguredStyle(const Settings &settings) {
 	if (settings.themeName.isEmpty() && settings.themeStyleName.isEmpty()) {
@@ -51,19 +53,9 @@ void Themes::applyFallback() {
 	
 	QStringList skinPaths;
 	skinPaths << QLatin1String(":/themes/Mumble");
-	QDir::setSearchPaths(QLatin1String("skin"), skinPaths);
-	
-	QString userStylesheetFn = userStylesheetPath();
-	QString userStylesheetContent;
-	if (readStylesheet(userStylesheetFn, userStylesheetContent)) {
-		qWarning("Themes: allowing user stylesheet at '%s' to override fallback stylesheet", qPrintable(userStylesheetFn));
-	}
+	QString defaultTheme = getDefaultStylesheet();
+	setTheme(defaultTheme, skinPaths);
 
-	qApp->setStyleSheet(
-		getDefaultStylesheet() +
-		QLatin1String("\n") +
-		userStylesheetContent
-	);
 }
 
 bool Themes::applyConfigured() {
@@ -87,14 +79,19 @@ bool Themes::applyConfigured() {
 	QStringList skinPaths;
 	skinPaths << qssFile.path();
 	skinPaths << QLatin1String(":/themes/Mumble"); // Some skins might want to fall-back on our built-in resources
-	QDir::setSearchPaths(QLatin1String("skin"), skinPaths);
 
 	QString themeQss = QString::fromUtf8(file.readAll());
+	setTheme(themeQss, skinPaths);
+	return true;
+}
 
+void Themes::setTheme(QString &themeQss, QStringList &skinPaths) {
+	QDir::setSearchPaths(QLatin1String("skin"), skinPaths);
+	
 	QString userStylesheetFn = userStylesheetPath();
 	QString userStylesheetContent;
 	if (readStylesheet(userStylesheetFn, userStylesheetContent)) {
-		qWarning("Themes: allowing user stylesheet at '%s' to override the chosen theme", qPrintable(userStylesheetFn));
+		qWarning("Themes: allowing user stylesheet at '%s' to override the stylesheet", qPrintable(userStylesheetFn));
 	}
 	
 	qApp->setStyleSheet(
@@ -103,7 +100,6 @@ bool Themes::applyConfigured() {
 		userStylesheetContent
 	);
 
-	return true;
 }
 
 bool Themes::apply() {
