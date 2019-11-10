@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "Log.h"
 
 #include "AudioOutput.h"
@@ -16,6 +14,14 @@
 #include "Screen.h"
 #include "ServerHandler.h"
 #include "TextToSpeech.h"
+#include "Utils.h"
+
+#include <QtNetwork/QNetworkReply>
+#include <QtGui/QImageWriter>
+#include <QtGui/QScreen>
+#include <QtGui/QTextBlock>
+#include <QtGui/QTextDocumentFragment>
+#include <QtWidgets/QDesktopWidget>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -33,21 +39,12 @@ LogConfig::LogConfig(Settings &st) : ConfigWidget(st) {
 	qgbTTS->setDisabled(true);
 #endif
 
-#if QT_VERSION >= 0x050000
 	qtwMessages->header()->setSectionResizeMode(ColMessage, QHeaderView::Stretch);
 	qtwMessages->header()->setSectionResizeMode(ColConsole, QHeaderView::ResizeToContents);
 	qtwMessages->header()->setSectionResizeMode(ColNotification, QHeaderView::ResizeToContents);
 	qtwMessages->header()->setSectionResizeMode(ColHighlight, QHeaderView::ResizeToContents);
 	qtwMessages->header()->setSectionResizeMode(ColTTS, QHeaderView::ResizeToContents);
 	qtwMessages->header()->setSectionResizeMode(ColStaticSound, QHeaderView::ResizeToContents);
-#else
-	qtwMessages->header()->setResizeMode(ColMessage, QHeaderView::Stretch);
-	qtwMessages->header()->setResizeMode(ColConsole, QHeaderView::ResizeToContents);
-	qtwMessages->header()->setResizeMode(ColNotification, QHeaderView::ResizeToContents);
-	qtwMessages->header()->setResizeMode(ColHighlight, QHeaderView::ResizeToContents);
-	qtwMessages->header()->setResizeMode(ColTTS, QHeaderView::ResizeToContents);
-	qtwMessages->header()->setResizeMode(ColStaticSound, QHeaderView::ResizeToContents);
-#endif
 
 	QTreeWidgetItem *twi;
 	for (int i = Log::firstMsgType; i <= Log::lastMsgType; ++i) {
@@ -107,6 +104,7 @@ void LogConfig::load(const Settings &r) {
 	}
 
 	qsbMaxBlocks->setValue(r.iMaxLogBlocks);
+	qcb24HourClock->setChecked(r.bLog24HourClock);
 
 #ifdef USE_NO_TTS
 	qtwMessages->hideColumn(ColTTS);
@@ -143,6 +141,7 @@ void LogConfig::save() const {
 		s.qmMessageSounds[mt] = i->text(ColStaticSoundPath);
 	}
 	s.iMaxLogBlocks = qsbMaxBlocks->value();
+	s.bLog24HourClock = qcb24HourClock->isChecked();
 
 #ifndef USE_NO_TTS
 	s.iTTSVolume=qsVolume->value();
@@ -231,10 +230,10 @@ const char *Log::msgNames[] = {
 	QT_TRANSLATE_NOOP("Log", "Critical"),
 	QT_TRANSLATE_NOOP("Log", "Warning"),
 	QT_TRANSLATE_NOOP("Log", "Information"),
-	QT_TRANSLATE_NOOP("Log", "Server Connected"),
-	QT_TRANSLATE_NOOP("Log", "Server Disconnected"),
-	QT_TRANSLATE_NOOP("Log", "User Joined Server"),
-	QT_TRANSLATE_NOOP("Log", "User Left Server"),
+	QT_TRANSLATE_NOOP("Log", "Server connected"),
+	QT_TRANSLATE_NOOP("Log", "Server disconnected"),
+	QT_TRANSLATE_NOOP("Log", "User joined server"),
+	QT_TRANSLATE_NOOP("Log", "User left server"),
 	QT_TRANSLATE_NOOP("Log", "User recording state changed"),
 	QT_TRANSLATE_NOOP("Log", "User kicked (you or by you)"),
 	QT_TRANSLATE_NOOP("Log", "User kicked"),
@@ -243,16 +242,16 @@ const char *Log::msgNames[] = {
 	QT_TRANSLATE_NOOP("Log", "User muted (you)"),
 	QT_TRANSLATE_NOOP("Log", "User muted (by you)"),
 	QT_TRANSLATE_NOOP("Log", "User muted (other)"),
-	QT_TRANSLATE_NOOP("Log", "User Joined Channel"),
-	QT_TRANSLATE_NOOP("Log", "User Left Channel"),
-	QT_TRANSLATE_NOOP("Log", "Permission Denied"),
-	QT_TRANSLATE_NOOP("Log", "Text Message"),
+	QT_TRANSLATE_NOOP("Log", "User joined channel"),
+	QT_TRANSLATE_NOOP("Log", "User left channel"),
+	QT_TRANSLATE_NOOP("Log", "Permission denied"),
+	QT_TRANSLATE_NOOP("Log", "Text message"),
 	QT_TRANSLATE_NOOP("Log", "You self-unmuted"),
 	QT_TRANSLATE_NOOP("Log", "You self-deafened"),
 	QT_TRANSLATE_NOOP("Log", "You self-undeafened"),
 	QT_TRANSLATE_NOOP("Log", "User renamed"),
-	QT_TRANSLATE_NOOP("Log", "You Joined Channel"),
-	QT_TRANSLATE_NOOP("Log", "You Joined Channel (moved)"),
+	QT_TRANSLATE_NOOP("Log", "You joined channel"),
+	QT_TRANSLATE_NOOP("Log", "You joined channel (moved)"),
 	QT_TRANSLATE_NOOP("Log", "User connected and entered channel"),
 	QT_TRANSLATE_NOOP("Log", "User left channel and disconnected"),
 	QT_TRANSLATE_NOOP("Log", "Private text message")
@@ -295,7 +294,7 @@ QString Log::msgColor(const QString &text, LogColorType t) {
 }
 
 QString Log::formatChannel(::Channel *c) {
-	return QString::fromLatin1("<a href='channelid://%1/%3' class='log-channel'>%2</a>").arg(c->iId).arg(Qt::escape(c->qsName)).arg(QString::fromLatin1(g.sh->qbaDigest.toBase64()));
+	return QString::fromLatin1("<a href='channelid://%1/%3' class='log-channel'>%2</a>").arg(c->iId).arg(c->qsName.toHtmlEscaped()).arg(QString::fromLatin1(g.sh->qbaDigest.toBase64()));
 }
 
 QString Log::formatClientUser(ClientUser *cu, LogColorType t, const QString &displayName) {
@@ -307,7 +306,7 @@ QString Log::formatClientUser(ClientUser *cu, LogColorType t, const QString &dis
 	}
 
 	if (cu) {
-		QString name = Qt::escape(displayName.isNull() ? cu->qsName : displayName);
+		QString name = (displayName.isNull() ? cu->qsName : displayName).toHtmlEscaped();
 		if (cu->qsHash.isEmpty()) {
 			return QString::fromLatin1("<a href='clientid://%2/%4' class='log-user log-%1'>%3</a>").arg(className).arg(cu->uiSession).arg(name).arg(QString::fromLatin1(g.sh->qbaDigest.toBase64()));
 		} else {
@@ -483,7 +482,7 @@ void Log::log(MsgType mt, const QString &console, const QString &terse, bool own
 		if (qdDate != dt.date()) {
 			qdDate = dt.date();
 			tc.insertBlock();
-			tc.insertHtml(tr("[Date changed to %1]\n").arg(Qt::escape(qdDate.toString(Qt::DefaultLocaleShortDate))));
+			tc.insertHtml(tr("[Date changed to %1]\n").arg(qdDate.toString(Qt::DefaultLocaleShortDate).toHtmlEscaped()));
 			tc.movePosition(QTextCursor::End);
 		}
 
@@ -496,7 +495,10 @@ void Log::log(MsgType mt, const QString &console, const QString &terse, bool own
 		} else if (! g.mw->qteLog->document()->isEmpty()) {
 			tc.insertBlock();
 		}
-		tc.insertHtml(Log::msgColor(QString::fromLatin1("[%1] ").arg(Qt::escape(dt.time().toString())), Log::Time));
+
+		const QString timeString = dt.time().toString(QLatin1String(g.s.bLog24HourClock ? "HH:mm:ss" : "hh:mm:ss AP"));
+		tc.insertHtml(Log::msgColor(QString::fromLatin1("[%1] ").arg(timeString.toHtmlEscaped()), Log::Time));
+
 		validHtml(console, &tc);
 		tc.movePosition(QTextCursor::End);
 		g.mw->qteLog->setTextCursor(tc);

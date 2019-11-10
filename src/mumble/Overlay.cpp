@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "Overlay.h"
 
 #include "OverlayClient.h"
@@ -18,7 +16,25 @@
 #include "RichTextEditor.h"
 #include "ServerHandler.h"
 #include "User.h"
+#include "Utils.h"
 #include "WebFetch.h"
+
+#include <QtCore/QProcessEnvironment>
+#include <QtCore/QtEndian>
+#include <QtGui/QFocusEvent>
+#include <QtGui/QImageReader>
+#include <QtGui/QImageWriter>
+#include <QtNetwork/QLocalServer>
+#include <QtWidgets/QMessageBox>
+
+#ifdef Q_OS_WIN
+# include <shellapi.h>
+#endif
+
+#ifdef Q_OS_MAC
+# include <ApplicationServices/ApplicationServices.h>
+# include <CoreFoundation/CoreFoundation.h>
+#endif
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -125,12 +141,8 @@ OverlayAppInfo OverlayAppInfo::applicationInfoForId(const QString &identifier) {
 	HINSTANCE qWinAppInstValue = GetModuleHandle(NULL);
 	HICON icon = ExtractIcon(qWinAppInstValue, identifier.toStdWString().c_str(), 0);
 	if (icon) {
-#if QT_VERSION >= 0x050000
 		extern QPixmap qt_pixmapFromWinHICON(HICON icon);
 		qiAppIcon = QIcon(qt_pixmapFromWinHICON(icon));
-#else
-		qiAppIcon = QIcon(QPixmap::fromWinHICON(icon));
-#endif
 		DestroyIcon(icon);
 	}
 #endif
@@ -204,7 +216,7 @@ Overlay::Overlay() : QObject() {
 #endif
 
 	if (! qlsServer->listen(pipepath)) {
-		QMessageBox::warning(NULL, QLatin1String("Mumble"), tr("Failed to create communication with overlay at %2: %1. No overlay will be available.").arg(Qt::escape(qlsServer->errorString()), Qt::escape(pipepath)), QMessageBox::Ok, QMessageBox::NoButton);
+		QMessageBox::warning(NULL, QLatin1String("Mumble"), tr("Failed to create communication with overlay at %2: %1. No overlay will be available.").arg(qlsServer->errorString().toHtmlEscaped(), pipepath.toHtmlEscaped()), QMessageBox::Ok, QMessageBox::NoButton);
 	} else {
 		qWarning() << "Overlay: Listening on" << qlsServer->fullServerName();
 		connect(qlsServer, SIGNAL(newConnection()), this, SLOT(newConnection()));
@@ -274,11 +286,7 @@ void Overlay::toggleShow() {
 				if (pid != oc->uiPid)
 					continue;
 #elif defined(Q_OS_MAC)
-				pid_t pid = 0;
-				ProcessSerialNumber psn;
-				GetFrontProcess(&psn);
-				GetProcessPID(&psn, &pid);
-				if (static_cast<quint64>(pid) != oc->uiPid)
+				if (static_cast<quint64>(getForegroundProcessId()) != oc->uiPid)
 					continue;
 #if 0
 				// Fullscreen only.

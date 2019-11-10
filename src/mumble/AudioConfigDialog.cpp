@@ -34,8 +34,6 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#include "mumble_pch.hpp"
-
 #include "AudioConfigDialog.h"
 
 #include "AudioInput.h"
@@ -43,6 +41,7 @@
 #include "AudioOutputSample.h"
 #include "Global.h"
 #include "NetworkConfig.h"
+#include "Utils.h"
 
 static ConfigWidget *AudioInputDialogNew(Settings &st) {
 	return new AudioInputDialog(st);
@@ -133,6 +132,7 @@ void AudioInputDialog::load(const Settings &r) {
 	loadCheckBox(qcbPushWindow, r.bShowPTTButtonWindow);
 	loadCheckBox(qcbPushClick, r.bTxAudioCue);
 	loadSlider(qsQuality, r.iQuality);
+	loadCheckBox(qcbAllowLowDelay, r.bAllowLowDelay);
 	if (r.iNoiseSuppress != 0)
 		loadSlider(qsNoise, - r.iNoiseSuppress);
 	else
@@ -161,6 +161,7 @@ void AudioInputDialog::load(const Settings &r) {
 
 void AudioInputDialog::save() const {
 	s.iQuality = qsQuality->value();
+	s.bAllowLowDelay = qcbAllowLowDelay->isChecked();
 	s.iNoiseSuppress = (qsNoise->value() == 14) ? 0 : - qsNoise->value();
 	s.bDenoise = qcbDenoise->isChecked();
 	s.iMinLoudness = 18000 - qsAmp->value() + 2000;
@@ -370,7 +371,7 @@ void AudioInputDialog::on_qcbSystem_currentIndexChanged(int) {
 
 		foreach(audioDevice d, ql) {
 			qcbDevice->addItem(d.first, d.second);
-			qcbDevice->setItemData(idx, Qt::escape(d.first), Qt::ToolTipRole);
+			qcbDevice->setItemData(idx, d.first.toHtmlEscaped(), Qt::ToolTipRole);
 			++idx;
 		}
 
@@ -523,7 +524,7 @@ void AudioOutputDialog::on_qcbSystem_currentIndexChanged(int) {
 
 		foreach(audioDevice d, ql) {
 			qcbDevice->addItem(d.first, d.second);
-			qcbDevice->setItemData(idx, Qt::escape(d.first), Qt::ToolTipRole);
+			qcbDevice->setItemData(idx, d.first.toHtmlEscaped(), Qt::ToolTipRole);
 			++idx;
 		}
 		bool canmute = aor->canMuteOthers();

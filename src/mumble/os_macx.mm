@@ -3,10 +3,12 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
 #include "LogEmitter.h"
-#include "Overlay.h"
 #include "MainWindow.h"
+#include "Overlay.h"
+#include "Utils.h"
+
+#include <CoreFoundation/CoreFoundation.h>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -58,16 +60,10 @@ static void mumbleMessageOutputQString(QtMsgType type, const QString &msg) {
 	}
 }
 
-#if QT_VERSION < 0x050000
-static void mumbleMessageOutput(QtMsgType type, const char *msg) {
-	mumbleMessageOutputQString(type, QString::fromUtf8(msg));
-}
-#elif QT_VERSION >= 0x050000
 static void mumbleMessageOutputWithContext(QtMsgType type, const QMessageLogContext &ctx, const QString &msg) {
 	Q_UNUSED(ctx);
 	mumbleMessageOutputQString(type, msg);
 }
-#endif
 
 void query_language() {
 	CFPropertyListRef cfaLangs;
@@ -152,11 +148,7 @@ void os_init() {
 		strcat(buff, logpath);
 		fConsole = fopen(buff, "a+");
 		if (fConsole) {
-#if QT_VERSION >= 0x050000
-		qInstallMessageHandler(mumbleMessageOutputWithContext);
-#else
-		qInstallMsgHandler(mumbleMessageOutput);
-#endif
+			qInstallMessageHandler(mumbleMessageOutputWithContext);
 		}
 	}
 

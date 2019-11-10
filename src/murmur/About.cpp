@@ -3,17 +3,18 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "murmur_pch.h"
-
-#if QT_VERSION >= 0x050000
-# include <QtWidgets/QApplication>
-#else
-# include <QtGui/QApplication>
-#endif
-
 #include "About.h"
 #include "Version.h"
 #include "License.h"
+#include "Utils.h"
+
+#include <QtWidgets/QApplication>
+#include <QtWidgets/QLabel>
+#include <QtWidgets/QPushButton>
+#include <QtWidgets/QTabWidget>
+#include <QtWidgets/QTextBrowser>
+#include <QtWidgets/QTextEdit>
+#include <QtWidgets/QVBoxLayout>
 
 AboutDialog::AboutDialog(QWidget *p, AboutDialogOptions options) : QDialog(p) {
 	setWindowTitle(tr("About Murmur"));
@@ -37,9 +38,9 @@ AboutDialog::AboutDialog(QWidget *p, AboutDialogOptions options) : QDialog(p) {
 	QList<LicenseInfo> thirdPartyLicenses = License::thirdPartyLicenses();
 	foreach(LicenseInfo li, thirdPartyLicenses) {
 		qtb3rdPartyLicense->append(QString::fromLatin1("<h3>%1 (<a href=\"%2\">%2</a>)</h3><pre>%3</pre>")
-				.arg(Qt::escape(li.name))
-				.arg(Qt::escape(li.url))
-				.arg(Qt::escape(li.license)));
+				.arg(li.name.toHtmlEscaped())
+				.arg(li.url.toHtmlEscaped())
+				.arg(li.license.toHtmlEscaped()));
 	}
 
 	qtb3rdPartyLicense->moveCursor(QTextCursor::Start);

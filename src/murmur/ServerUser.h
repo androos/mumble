@@ -6,19 +6,25 @@
 #ifndef MUMBLE_MURMUR_SERVERUSER_H_
 #define MUMBLE_MURMUR_SERVERUSER_H_
 
-#include <QtCore/QStringList>
-#include <QtCore/QTime>
+#include <QtCore/QtGlobal>
 
-#ifdef Q_OS_UNIX
-#include <sys/socket.h>
-#else
-#include <winsock2.h>
+#ifdef Q_OS_WIN
+# include "win.h"
 #endif
 
 #include "Connection.h"
 #include "Timer.h"
 #include "User.h"
 #include "HostAddress.h"
+
+#include <QtCore/QStringList>
+#include <QtCore/QDateTime>
+
+#ifdef Q_OS_WIN
+# include <winsock2.h>
+#else
+# include <sys/socket.h>
+#endif
 
 // Unfortunately, this needs to be "large enough" to hold
 // enough frames to account for both short-term and
@@ -61,7 +67,7 @@ class LeakyBucket {
 	private:
 		unsigned int tokensPerSec, maxTokens;
 		long currentTokens;
-		QTime lastUpdate;
+		QDateTime lastUpdate;
 
 	public:
 		// Returns true if packets should be dropped

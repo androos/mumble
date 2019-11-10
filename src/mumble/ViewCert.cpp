@@ -3,16 +3,21 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "ViewCert.h"
+
+#include <QtCore/QUrl>
+#include <QtNetwork/QSslKey>
+#include <QtWidgets/QDialogButtonBox>
+#include <QtWidgets/QGroupBox>
+#include <QtWidgets/QHBoxLayout>
+#include <QtWidgets/QListWidget>
+#include <QtWidgets/QVBoxLayout>
 
 static QString decode_utf8_qssl_string(const QString &input) {
 	QString i = input;
 	return QUrl::fromPercentEncoding(i.replace(QLatin1String("\\x"), QLatin1String("%")).toLatin1());
 }
 
-#if QT_VERSION >= 0x050000
 static QStringList processQSslCertificateInfo(QStringList in) {
 	QStringList list;
 	foreach (QString str, in) {
@@ -20,13 +25,6 @@ static QStringList processQSslCertificateInfo(QStringList in) {
 	}
 	return list;
 }
-#else
-static QStringList processQSslCertificateInfo(QString in) {
-	QStringList out;
-	out << decode_utf8_qssl_string(in);
-	return out;
-}
-#endif
 
 static void addQSslCertificateInfo(QStringList &l, const QString &label, const QStringList &items) {
 	foreach (const QString &item, items) {
@@ -126,17 +124,10 @@ void ViewCert::on_Chain_currentRowChanged(int idx) {
 	l << tr("Serial: %1").arg(QString::fromLatin1(c.serialNumber().toHex()));
 	l << tr("Public Key: %1 bits %2").arg(c.publicKey().length()).arg((c.publicKey().algorithm() == QSsl::Rsa) ? tr("RSA") : tr("DSA"));
 	l << tr("Digest (SHA-1): %1").arg(prettifyDigest(QString::fromLatin1(c.digest(QCryptographicHash::Sha1).toHex())));
-#if QT_VERSION >= 0x050000
 	l << tr("Digest (SHA-256): %1").arg(prettifyDigest(QString::fromLatin1(c.digest(QCryptographicHash::Sha256).toHex())));
-#endif
 
-#if QT_VERSION >= 0x050000
 	const QMultiMap<QSsl::AlternativeNameEntryType, QString> &alts = c.subjectAlternativeNames();
 	QMultiMap<QSsl::AlternativeNameEntryType, QString>::const_iterator i;
-#else
-	const QMultiMap<QSsl::AlternateNameEntryType, QString> &alts = c.alternateSubjectNames();
-	QMultiMap<QSsl::AlternateNameEntryType, QString>::const_iterator i;
-#endif
 
 	for (i=alts.constBegin(); i != alts.constEnd(); ++i) {
 		switch (i.key()) {

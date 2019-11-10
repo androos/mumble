@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "murmur_pch.h"
-
 #include "Server.h"
 
 #include "ACL.h"
@@ -22,12 +20,30 @@
 #include "HostAddress.h"
 
 #ifdef USE_BONJOUR
-#include "BonjourServer.h"
-#include "BonjourServiceRegister.h"
+# include "BonjourServer.h"
+# include "BonjourServiceRegister.h"
+#endif
+
+#include "Utils.h"
+
+#include <QtCore/QCoreApplication>
+#include <QtCore/QXmlStreamAttributes>
+#include <QtCore/QtEndian>
+#include <QtNetwork/QHostInfo>
+#include <QtNetwork/QSslConfiguration>
+
+#include <boost/bind.hpp>
+
+#ifdef Q_OS_WIN
+# include <qos2.h>
+# include <ws2tcpip.h>
+#else
+# include <netinet/in.h>
+# include <poll.h>
 #endif
 
 #ifndef MAX
-#define MAX(a,b) ((a)>(b) ? (a):(b))
+# define MAX(a,b) ((a)>(b) ? (a):(b))
 #endif
 
 #define UDP_PACKET_SIZE 1024
@@ -79,11 +95,7 @@ bool SslServer::hasDualStackSupport() {
 	return result;
 }
 
-#if QT_VERSION >= 0x050000
 void SslServer::incomingConnection(qintptr v) {
-#else
-void SslServer::incomingConnection(int v) {
-#endif
 	QSslSocket *s = new QSslSocket(this);
 	s->setSocketDescriptor(v);
 	qlSockets.append(s);
@@ -621,11 +633,9 @@ void Server::initBonjour() {
 }
 
 void Server::removeBonjour() {
-	if (bsRegistration) {
-		delete bsRegistration;
-		bsRegistration = NULL;
-		log("Stopped announcing server via bonjour");
-	}
+	delete bsRegistration;
+	bsRegistration = NULL;
+	log("Stopped announcing server via bonjour");
 }
 #endif
 
@@ -920,7 +930,7 @@ bool Server::checkDecrypt(ServerUser *u, const char *encrypt, char *plain, unsig
 }
 
 void Server::sendMessage(ServerUser *u, const char *data, int len, QByteArray &cache, bool force) {
-	if ((QAtomicIntLoad(u->aiUdpFlag) == 1 || force) && (u->sUdpSocket != INVALID_SOCKET)) {
+	if ((u->aiUdpFlag.load() == 1 || force) && (u->sUdpSocket != INVALID_SOCKET)) {
 #if defined(__LP64__)
 		STACKVAR(char, ebuffer, len+4+16);
 		char *buffer = reinterpret_cast<char *>(((reinterpret_cast<quint64>(ebuffer) + 8) & ~7) + 4);
@@ -1285,10 +1295,8 @@ void Server::newClient() {
 		// In Qt 5.4, QSsl::SecureProtocols is equivalent
 		// to "TLSv1.0 or later", which we require.
 		sock->setProtocol(QSsl::SecureProtocols);
-#elif QT_VERSION >= 0x050000
-		sock->setProtocol(QSsl::TlsV1_0);
 #else
-		sock->setProtocol(QSsl::TlsV1);
+		sock->setProtocol(QSsl::TlsV1_0);
 #endif
 		sock->startServerEncryption();
 	}
@@ -1313,14 +1321,9 @@ void Server::encrypted() {
 	QList<QSslCertificate> certs = uSource->peerCertificateChain();
 	if (!certs.isEmpty()) {
 		const QSslCertificate &cert = certs.last();
-#if QT_VERSION >= 0x050000
 		uSource->qslEmail = cert.subjectAlternativeNames().values(QSsl::EmailEntry);
-#else
-		uSource->qslEmail = cert.alternateSubjectNames().values(QSsl::EmailEntry);
-#endif
 		uSource->qsHash = cert.digest(QCryptographicHash::Sha1).toHex();
 		if (! uSource->qslEmail.isEmpty() && uSource->bVerified) {
-#if QT_VERSION >= 0x050000
 			QString subject;
 			QString issuer;
 
@@ -1333,10 +1336,7 @@ void Server::encrypted() {
 			if (! issuerList.isEmpty()) {
 				issuer = issuerList.first();
 			}
-#else
-			QString subject = cert.subjectInfo(QSslCertificate::CommonName);
-			QString issuer = certs.first().issuerInfo(QSslCertificate::CommonName);
-#endif
+
 			log(uSource, QString::fromUtf8("Strong certificate for %1 <%2> (signed by %3)").arg(subject).arg(uSource->qslEmail.join(", ")).arg(issuer));
 		}
 
@@ -1410,11 +1410,8 @@ void Server::sslError(const QList<QSslError> &errors) {
 		// See
 		// https://bugreports.qt.io/browse/QTBUG-53906
 		// https://github.com/mumble-voip/mumble/issues/2334
-#if QT_VERSION >= 0x050000
+
 		u->disconnectSocket();
-#else
-		u->disconnectSocket(true);
-#endif
 	}
 }
 
@@ -1629,7 +1626,7 @@ void Server::removeChannel(Channel *chan, Channel *dest) {
 		}
 
 		Channel *target = dest;
-		while (target->cParent && ! hasPermission(static_cast<ServerUser *>(p), target, ChanACL::Enter))
+		while (target->cParent && (! hasPermission(static_cast<ServerUser *>(p), target, ChanACL::Enter) || isChannelFull(target, static_cast<ServerUser *>(p))))
 			target = target->cParent;
 
 		MumbleProto::UserState mpus;

@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "UserView.h"
 
 #include "Channel.h"
@@ -13,6 +11,11 @@
 #include "MainWindow.h"
 #include "ServerHandler.h"
 #include "UserModel.h"
+
+#include <QtGui/QDesktopServices>
+#include <QtGui/QHelpEvent>
+#include <QtGui/QPainter>
+#include <QtWidgets/QWhatsThis>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -38,12 +41,7 @@ void UserDelegate::paint(QPainter * painter, const QStyleOptionViewItem &option,
 
 	painter->save();
 
-#if QT_VERSION >= 0x050000
 	QStyleOptionViewItem o = option;
-#else
-	QStyleOptionViewItemV4 o = option;
-#endif
-
 	initStyleOption(&o, index);
 
 	QStyle *style = o.widget->style();
@@ -372,12 +370,7 @@ void UserView::updateChannel(const QModelIndex &idx) {
 	}
 }
 
-#if QT_VERSION >= 0x050000
-void UserView::dataChanged ( const QModelIndex & topLeft, const QModelIndex & bottomRight, const QVector<int> &)
-#else
-void UserView::dataChanged ( const QModelIndex & topLeft, const QModelIndex & bottomRight)
-#endif
-{
+void UserView::dataChanged ( const QModelIndex & topLeft, const QModelIndex & bottomRight, const QVector<int> &) {
 	UserModel *um = static_cast<UserModel *>(model());
 	int nRowCount = um->rowCount();
 	int i;
@@ -386,4 +379,3 @@ void UserView::dataChanged ( const QModelIndex & topLeft, const QModelIndex & bo
 
 	QTreeView::dataChanged(topLeft,bottomRight);
 }
-

@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "About.h"
 #include "ACLEditor.h"
 #include "AudioInput.h"
@@ -28,6 +26,7 @@
 #include "VersionCheck.h"
 #include "ViewCert.h"
 #include "CryptState.h"
+#include "Utils.h"
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -40,14 +39,17 @@
 
 #define VICTIM_INIT \
 	ClientUser *pDst=ClientUser::get(msg.session()); \
-	 if (! pDst) { \
+	 if (!pDst) { \
  		qWarning("MainWindow: Message for nonexistent victim %d.", msg.session()); \
 		return; \
 	}
 
 #define SELF_INIT \
-	ClientUser *pSelf = ClientUser::get(g.uiSession);
-
+	ClientUser *pSelf = ClientUser::get(g.uiSession); \
+	if (!pSelf) { \
+		qWarning("MainWindow: Received message outside of session (sid %d).", g.uiSession); \
+		return; \
+	}
 
 void MainWindow::msgAuthenticate(const MumbleProto::Authenticate &) {
 }
@@ -84,7 +86,7 @@ void MainWindow::msgReject(const MumbleProto::Reject &msg) {
 			reason = tr("Your account information can not be verified currently. Please try again later");
 			break;
 		default:
-			reason = Qt::escape(u8(msg.reason()));
+			reason = u8(msg.reason()).toHtmlEscaped();
 			break;
 	}
 
@@ -93,9 +95,16 @@ void MainWindow::msgReject(const MumbleProto::Reject &msg) {
 }
 
 void MainWindow::msgServerSync(const MumbleProto::ServerSync &msg) {
+	const ClientUser *user = ClientUser::get(msg.session());
+	if (!user) {
+		g.l->log(Log::CriticalError, tr("Server sync protocol violation. No user profile received."));
+		g.sh->disconnect();
+		return;
+	}
+	g.uiSession = msg.session();
+
 	g.sh->sendPing(); // Send initial ping to establish UDP connection
 
-	g.uiSession = msg.session();
 	g.pPermissions = ChanACL::Permissions(static_cast<unsigned int>(msg.permissions()));
 	g.l->clearIgnore();
 	if (msg.has_welcome_text()) {
@@ -133,13 +142,13 @@ void MainWindow::msgServerSync(const MumbleProto::ServerSync &msg) {
 		GlobalShortcutEngine::engine->bNeedRemap = true;
 	}
 
-	const ClientUser *user = ClientUser::get(g.uiSession);
+	
 	connect(user, SIGNAL(talkingStateChanged()), this, SLOT(userStateChanged()));
 	connect(user, SIGNAL(muteDeafStateChanged()), this, SLOT(userStateChanged()));
 	connect(user, SIGNAL(prioritySpeakerStateChanged()), this, SLOT(userStateChanged()));
 	connect(user, SIGNAL(recordingStateChanged()), this, SLOT(userStateChanged()));
 	
-	qstiIcon->setToolTip(tr("Mumble: %1").arg(Qt::escape(Channel::get(0)->qsName)));
+	qstiIcon->setToolTip(tr("Mumble: %1").arg(Channel::get(0)->qsName.toHtmlEscaped()));
 
 	// Update QActions and menues
 	on_qmServer_aboutToShow();
@@ -206,7 +215,7 @@ void MainWindow::msgPermissionDenied(const MumbleProto::PermissionDenied &msg) {
 					g.s.bTTS = true;
 					quint32 oflags = g.s.qmMessages.value(Log::PermissionDenied);
 					g.s.qmMessages[Log::PermissionDenied] = (oflags | Settings::LogTTS) & (~Settings::LogSoundfile);
-					g.l->log(Log::PermissionDenied, QString::fromUtf8(g.ccHappyEaster + 39).arg(Qt::escape(g.s.qsUsername)));
+					g.l->log(Log::PermissionDenied, QString::fromUtf8(g.ccHappyEaster + 39).arg(g.s.qsUsername.toHtmlEscaped()));
 					g.s.qmMessages[Log::PermissionDenied] = oflags;
 					g.s.bDeaf = bold;
 					g.s.bTTS = bold2;
@@ -231,7 +240,7 @@ void MainWindow::msgPermissionDenied(const MumbleProto::PermissionDenied &msg) {
 			break;
 		case MumbleProto::PermissionDenied_DenyType_UserName: {
 				if (msg.has_name())
-					g.l->log(Log::PermissionDenied, tr("Invalid username: %1.").arg(Qt::escape(u8(msg.name()))));
+					g.l->log(Log::PermissionDenied, tr("Invalid username: %1.").arg(u8(msg.name()).toHtmlEscaped()));
 				else
 					g.l->log(Log::PermissionDenied, tr("Invalid username."));
 			}
@@ -250,7 +259,7 @@ void MainWindow::msgPermissionDenied(const MumbleProto::PermissionDenied &msg) {
 			break;
 		default: {
 				if (msg.has_reason())
-					g.l->log(Log::PermissionDenied, tr("Denied: %1.").arg(Qt::escape(u8(msg.reason()))));
+					g.l->log(Log::PermissionDenied, tr("Denied: %1.").arg(u8(msg.reason()).toHtmlEscaped()));
 				else
 					g.l->log(Log::PermissionDenied, tr("Permission denied."));
 			}
@@ -263,8 +272,7 @@ void MainWindow::msgUDPTunnel(const MumbleProto::UDPTunnel &) {
 
 void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 	ACTOR_INIT;
-	SELF_INIT;
-
+	ClientUser* pSelf = ClientUser::get(g.uiSession);
 	ClientUser *pDst = ClientUser::get(msg.session());
 	Channel *channel = NULL;
 
@@ -576,7 +584,7 @@ void MainWindow::msgUserRemove(const MumbleProto::UserRemove &msg) {
 	ACTOR_INIT;
 	SELF_INIT;
 
-	QString reason = Qt::escape(u8(msg.reason()));
+	QString reason = u8(msg.reason()).toHtmlEscaped();
 
 	if (pDst == pSelf) {
 		bRetryServer = false;
@@ -696,7 +704,11 @@ void MainWindow::msgChannelRemove(const MumbleProto::ChannelRemove &msg) {
 				g.db->setChannelFiltered(sh->qbaDigest, c->iId, false);
 			c->bFiltered = false;
 		}
-		pmModel->removeChannel(c);
+		if (!pmModel->removeChannel(c, true)) {
+			g.l->log(Log::CriticalError, tr("Protocol violation. Server sent remove for occupied channel."));
+			g.sh->disconnect();
+			return;
+		}
 	}
 }
 

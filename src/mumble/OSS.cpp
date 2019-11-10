@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "OSS.h"
 
 #include <sys/soundcard.h>
@@ -74,7 +72,7 @@ const QList<audioDevice> OSSInputRegistrar::getDeviceChoices() {
 	QList<audioDevice> qlReturn;
 
 	QStringList qlInputDevs = cards->qhInput.keys();
-	qSort(qlInputDevs);
+	std::sort(qlInputDevs.begin(), qlInputDevs.end());
 
 	if (qlInputDevs.contains(g.s.qsOSSInput)) {
 		qlInputDevs.removeAll(g.s.qsOSSInput);
@@ -107,7 +105,7 @@ const QList<audioDevice> OSSOutputRegistrar::getDeviceChoices() {
 	QList<audioDevice> qlReturn;
 
 	QStringList qlOutputDevs = cards->qhOutput.keys();
-	qSort(qlOutputDevs);
+	std::sort(qlOutputDevs.begin(), qlOutputDevs.end());
 
 	if (qlOutputDevs.contains(g.s.qsOSSOutput)) {
 		qlOutputDevs.removeAll(g.s.qsOSSOutput);

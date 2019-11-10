@@ -3,10 +3,19 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "TaskList.h"
 
+#include "MumbleApplication.h"
+
+#include "win.h"
+
+#include <QtCore/QFileInfo>
+#include <QtCore/QSettings>
+#include <QtCore/QString>
+#include <QtCore/QUrl>
+#include <QtCore/QUrlQuery>
+
+#include <shlobj.h>
 #include <shobjidl.h>
 #include <propkey.h>
 #include <propvarutil.h>
@@ -32,15 +41,10 @@ void TaskList::addToRecentList(QString name, QString user, QString host, int por
 	url.setHost(host);
 	url.setPort(port);
 
-#if QT_VERSION >= 0x050000
 	QUrlQuery query;
 	query.addQueryItem(QLatin1String("title"), name);
 	query.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
 	url.setQuery(query);
-#else
-	url.addQueryItem(QLatin1String("title"), name);
-	url.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
-#endif
 
 	QSettings settings(QLatin1String("HKEY_CLASSES_ROOT"), QSettings::NativeFormat);
 

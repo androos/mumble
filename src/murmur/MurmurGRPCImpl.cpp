@@ -7,8 +7,6 @@
 # include <boost/function.hpp>
 #endif
 
-#include "murmur_pch.h"
-
 #include "Mumble.pb.h"
 
 #include "../Message.h"
@@ -18,6 +16,9 @@
 #include "ServerUser.h"
 #include "Server.h"
 #include "Channel.h"
+#include "Utils.h"
+
+#include <QtCore/QStack>
 
 #include "MurmurRPC.proto.Wrapper.cpp"
 
@@ -127,9 +128,7 @@ void GRPCStart() {
 }
 
 void GRPCStop() {
-	if (service) {
-		delete service;
-	}
+	delete service;
 }
 
 MurmurRPCImpl::MurmurRPCImpl(const QString &address, std::shared_ptr<::grpc::ServerCredentials> credentials) {
@@ -197,7 +196,7 @@ void ToRPC(const ::Server *srv, const ::User *u, ::MurmurRPC::User *ru) {
 	ru->set_udp_ping_msecs(su->dUDPPingAvg);
 	ru->set_tcp_ping_msecs(su->dTCPPingAvg);
 
-	ru->set_tcp_only(QAtomicIntLoad(su->aiUdpFlag) == 0);
+	ru->set_tcp_only(su->aiUdpFlag.load() == 0);
 
 	ru->set_address(su->haAddress.toStdString());
 }
@@ -1701,7 +1700,7 @@ void V1_TreeQuery::impl(bool) {
 		ToRPC(server, currentChannel, currentTree->mutable_channel());
 
 		QList< ::User *> users = currentChannel->qlUsers;
-		qSort(users.begin(), users.end(), [] (const ::User *a, const ::User *b) -> bool {
+		std::sort(users.begin(), users.end(), [] (const ::User *a, const ::User *b) -> bool {
 			return ::User::lessThan(a, b);
 		});
 		foreach(const ::User *u, users) {
@@ -1710,7 +1709,7 @@ void V1_TreeQuery::impl(bool) {
 		}
 
 		QList< ::Channel *> channels = currentChannel->qlChannels;
-		qSort(channels.begin(), channels.end(), [] (const ::Channel *a, const ::Channel *b) -> bool {
+		std::sort(channels.begin(), channels.end(), [] (const ::Channel *a, const ::Channel *b) -> bool {
 			return ::Channel::lessThan(a, b);
 		});
 		foreach(const ::Channel *subChannel, channels) {

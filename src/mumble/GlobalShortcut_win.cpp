@@ -3,7 +3,11 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
+#include "GlobalShortcut_win.h"
+
+#include "MainWindow.h"
+#include "OverlayClient.h"
+#include "Utils.h"
 
 // MinGW does not support std::future/std::promise
 // at present. Use Boost's implementation for now.
@@ -11,14 +15,14 @@
 #include <boost/thread.hpp>
 #include <boost/thread/future.hpp>
 
-#include "GlobalShortcut_win.h"
-
-#include "MainWindow.h"
-#include "OverlayClient.h"
-#include "Global.h"
+#include <QtCore/QElapsedTimer>
+#include <QtCore/QTimer>
 
 // 3rdparty/xinputcheck-src.
 #include <xinputcheck.h>
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
+#include "Global.h"
 
 #undef FAILED
 #define FAILED(Status) (static_cast<HRESULT>(Status)<0)
@@ -483,8 +487,9 @@ BOOL GlobalShortcutWin::EnumDevicesCB(LPCDIDEVICEINSTANCE pdidi, LPVOID pContext
 	// See issues mumble-voip/mumble#2104 and mumble-voip/mumble#2147
 	// for more information.
 	if (XInputCheck_IsGuidProductXInputDevice(&id->guidproduct)) {
+#ifdef USE_XBOXINPUT
 		cbgsw->nxboxinput += 1;
-
+#endif
 		qWarning("GlobalShortcutWin: excluded XInput device '%s' (guid %s guid product %s) from DirectInput",
 		         qPrintable(id->name),
 		         qPrintable(id->vguid.toString()),
@@ -555,7 +560,7 @@ BOOL GlobalShortcutWin::EnumDevicesCB(LPCDIDEVICEINSTANCE pdidi, LPVOID pContext
 
 	if (id->qhNames.count() > 0) {
 		QList<DWORD> types = id->qhNames.keys();
-		qSort(types);
+		std::sort(types.begin(), types.end());
 
 		int nbuttons = types.count();
 		STACKVAR(DIOBJECTDATAFORMAT, rgodf, nbuttons);
@@ -616,8 +621,9 @@ void GlobalShortcutWin::timeTicked() {
 		uiHardwareDevices = g.mw->uiNewHardware;
 
 		XInputCheck_ClearDeviceCache();
+#ifdef USE_XBOXINPUT
 		nxboxinput = 0;
-
+#endif
 		pDI->EnumDevices(DI8DEVCLASS_ALL, EnumDevicesCB, static_cast<void *>(this), DIEDFL_ATTACHEDONLY);
 	}
 

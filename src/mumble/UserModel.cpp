@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "UserModel.h"
 
 #include "ClientUser.h"
@@ -18,6 +16,13 @@
 #include "ServerHandler.h"
 #include "Usage.h"
 #include "User.h"
+
+#include <QtCore/QMimeData>
+#include <QtCore/QStack>
+#include <QtGui/QImageReader>
+#include <QtWidgets/QMessageBox>
+#include <QtWidgets/QToolTip>
+#include <QtWidgets/QWhatsThis>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -1156,12 +1161,12 @@ Channel *UserModel::addChannel(int id, Channel *p, const QString &name) {
 	return c;
 }
 
-void UserModel::removeChannel(Channel *c) {
-	ModelItem *item, *i;
+bool UserModel::removeChannel(Channel *c, const bool onlyIfUnoccupied) {
+	const ModelItem *item = ModelItem::c_qhChannels.value(c);
+	
+	if (onlyIfUnoccupied && item->iUsers !=0) return false; // Checks full hierarchy
 
-	item=ModelItem::c_qhChannels.value(c);
-
-	foreach(i, item->qlChildren) {
+	foreach(const ModelItem *i, item->qlChildren) {
 		if (i->pUser)
 			removeUser(i->pUser);
 		else
@@ -1171,7 +1176,7 @@ void UserModel::removeChannel(Channel *c) {
 	Channel *p = c->cParent;
 
 	if (! p)
-		return;
+		return true;
 
 	ModelItem *citem = ModelItem::c_qhChannels.value(p);
 
@@ -1187,6 +1192,7 @@ void UserModel::removeChannel(Channel *c) {
 
 	delete item;
 	delete c;
+	return true;
 }
 
 void UserModel::moveChannel(Channel *c, Channel *p) {

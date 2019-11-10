@@ -18,17 +18,10 @@ if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
 			EXTRA_CONFIG="no-pch ${EXTRA_CONFIG}"
 		fi
 		qmake CONFIG+="release tests g15-emulator ${EXTRA_CONFIG}" DEFINES+="MUMBLE_VERSION=${TRAVIS_COMMIT:0:7}" -recursive
-		if [ "${MUMBLE_NO_PCH}" == "1" ] && [ "${MASTER_BRANCH}" = "1" ]; then
-			# Wraps the compilation with the Build Wrapper to generate the configuration used later by the SonarQube Scanner.
-			mkdir build
-			build-wrapper-linux-x86-64 --out-dir build/sonar make -j 2
-			make check
-
-			# Run the SonarQube analysis
-			sonar-scanner
-		else
-			make -j2 && make check
-		fi
+		make -j2 && make check
+	elif [ "${MUMBLE_HOST}" == "aarch64-linux-gnu" ]; then
+		qmake CONFIG+="release tests warnings-as-errors ${EXTRA_CONFIG}" -recursive
+		make -j $(nproc)
 	elif [ "${MUMBLE_HOST}" == "i686-w64-mingw32" ]; then
 		wget http://www.steinberg.net/sdk_downloads/asiosdk2.3.zip -P ../
 		unzip ../asiosdk2.3.zip -d ../
@@ -41,7 +34,7 @@ if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
 		fi
 		${MUMBLE_HOST}.static-qmake-qt5 -recursive -Wall CONFIG+="release tests warnings-as-errors g15-emulator no-overlay no-bonjour no-elevation no-ice ${EXTRA_CONFIG}"
 		make -j2
-		make check TESTRUNNER="wine"
+		make check TESTRUNNER="wine-development"
 	elif [ "${MUMBLE_HOST}" == "x86_64-w64-mingw32" ]; then
 		wget http://www.steinberg.net/sdk_downloads/asiosdk2.3.zip -P ../
 		unzip ../asiosdk2.3.zip -d ../
@@ -54,18 +47,10 @@ if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
 		fi
 		${MUMBLE_HOST}.static-qmake-qt5 -recursive -Wall CONFIG+="release tests warnings-as-errors g15-emulator no-overlay no-bonjour no-elevation no-ice ${EXTRA_CONFIG}"
 		make -j2
-		make check TESTRUNNER="wine"
+		make check TESTRUNNER="wine-development"
 	else
 		exit 1
 	fi
-elif [ "${TRAVIS_OS_NAME}" == "osx" ]; then
-	export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/lib/pkgconfig
-	export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/usr/local/opt/openssl/lib/pkgconfig
-	export PATH=$PATH:/usr/local/opt/qt5/bin:/usr/local/bin
-	export MUMBLE_PREFIX=/usr/local
-	export MUMBLE_ICE_PREFIX=/usr/local/opt/ice
-	qmake CONFIG+="release tests warnings-as-errors" && make -j2 && make check
-	./macx/scripts/osxdist.py --no-compat-warning
 else
 	exit 1
 fi

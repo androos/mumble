@@ -3,13 +3,16 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "AudioStats.h"
 
 #include "AudioInput.h"
 #include "Global.h"
+#include "Utils.h"
 #include "smallft.h"
+
+#include <QtGui/QPainter>
+
+#include <cmath>
 
 AudioBar::AudioBar(QWidget *p) : QWidget(p) {
 	qcBelow = Qt::yellow;
@@ -207,7 +210,7 @@ void AudioNoiseWidget::paintEvent(QPaintEvent *) {
 	QPainter paint(this);
 	QPalette pal;
 
-	paint.fillRect(rect(), pal.color(QPalette::Background));
+	paint.fillRect(rect(), pal.color(QPalette::Window));
 
 	AudioInputPtr ai = g.ai;
 	if (ai.get() == NULL || ! ai->sppPreprocess)

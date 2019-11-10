@@ -3,14 +3,17 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "SocketRPC.h"
 
 #include "Channel.h"
 #include "ClientUser.h"
 #include "MainWindow.h"
 #include "ServerHandler.h"
+
+#include <QtCore/QProcessEnvironment>
+#include <QtCore/QUrlQuery>
+#include <QtNetwork/QLocalServer>
+#include <QtXml/QDomDocument>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -173,13 +176,9 @@ void SocketRPCClient::processXml() {
 				u.setPort(port);
 				u.setUserName(user);
 
-#if QT_VERSION >= 0x050000
 				QUrlQuery query;
 				query.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
 				u.setQuery(query);
-#else
-				u.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
-#endif
 
 				QStringList path;
 				Channel *c = ClientUser::get(g.uiSession)->cChannel;

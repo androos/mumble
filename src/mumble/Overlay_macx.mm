@@ -3,13 +3,16 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-#import <ScriptingBridge/ScriptingBridge.h>
-#import <Cocoa/Cocoa.h>
-#include <Carbon/Carbon.h>
 #include "OverlayConfig.h"
 #include "OverlayClient.h"
 #include "MainWindow.h"
+
+#include <QtCore/QProcess>
+#include <QtCore/QXmlStreamReader>
+
+#import <ScriptingBridge/ScriptingBridge.h>
+#import <Cocoa/Cocoa.h>
+#include <Carbon/Carbon.h>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -23,6 +26,15 @@ extern "C" {
 
 static NSString *MumbleOverlayLoaderBundle = @"/Library/ScriptingAdditions/MumbleOverlay.osax";
 static NSString *MumbleOverlayLoaderBundleIdentifier = @"net.sourceforge.mumble.OverlayScriptingAddition";
+
+pid_t getForegroundProcessId() {
+	NSRunningApplication *app = [[NSWorkspace sharedWorkspace] frontmostApplication];
+	if (app) {
+		return [app processIdentifier];
+	}
+
+	return 0;
+}
 
 @interface OverlayInjectorMac : NSObject {
 	BOOL active;
@@ -200,13 +212,6 @@ void OverlayClient::updateMouse() {
 				cgimg = [(NSBitmapImageRep *)rep CGImage];
 			}
 		}
-
-#if QT_VERSION < 0x050000
-		if (cgimg) {
-			pm = QPixmap::fromMacCGImageRef(cgimg);
-			qmCursors.insert(csShape, pm);
-		}
-#endif
 	}
 
 	NSPoint p = [cursor hotSpot];

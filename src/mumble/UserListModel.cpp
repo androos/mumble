@@ -3,14 +3,19 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "UserListModel.h"
+
 #include "Channel.h"
 #include "Message.h"
+#include "Utils.h"
+
+#include <algorithm>
+
+#ifdef _MSC_VER
+# include <functional>
+#endif
 
 #include <vector>
-#include <algorithm>
 
 UserListModel::UserListModel(const MumbleProto::UserList& userList, QObject *parent_)
 	: QAbstractTableModel(parent_)
@@ -88,7 +93,7 @@ QVariant UserListModel::data(const QModelIndex &dataIndex, int role) const {
 		switch (dataIndex.column()) {
 			case COL_INACTIVEDAYS: return tr("Last seen: %1").arg(user.last_seen().empty() ?
 				                                                      tr("Never")
-				                                                    : Qt::escape(u8(user.last_seen())));
+				                                                    : u8(user.last_seen()).toHtmlEscaped());
 			case COL_LASTCHANNEL:  return tr("Channel ID: %1").arg(user.last_channel());
 			default:               return QVariant();
 		}

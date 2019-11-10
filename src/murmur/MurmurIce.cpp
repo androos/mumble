@@ -3,15 +3,7 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "murmur_pch.h"
-
 #include "MurmurIce.h"
-
-#include <limits>
-
-#include <Ice/Ice.h>
-#include <Ice/SliceChecksums.h>
-#include <IceUtil/IceUtil.h>
 
 #include "Channel.h"
 #include "Group.h"
@@ -22,6 +14,21 @@
 #include "ServerDB.h"
 #include "User.h"
 #include "Ban.h"
+#include "Utils.h"
+
+#include <QtCore/QCoreApplication>
+#include <QtCore/QSettings>
+#include <QtCore/QStack>
+
+#include <boost/bind.hpp>
+
+#include <openssl/err.h>
+
+#include <Ice/Ice.h>
+#include <Ice/SliceChecksums.h>
+#include <IceUtil/IceUtil.h>
+
+#include <limits>
 
 using namespace std;
 using namespace Murmur;
@@ -116,7 +123,7 @@ static void userToUser(const ::User *p, Murmur::User &mp) {
 	mp.udpPing = u->dUDPPingAvg;
 	mp.tcpPing = u->dTCPPingAvg;
 
-	mp.tcponly = QAtomicIntLoad(u->aiUdpFlag) == 0;
+	mp.tcponly = u->aiUdpFlag.load() == 0;
 
 	::Murmur::NetAddress addr(16, 0);
 	const Q_IPV6ADDR &a = u->haAddress.qip6;

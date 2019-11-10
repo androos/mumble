@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "Overlay.h"
 #include "MainWindow.h"
 #include "ServerHandler.h"
@@ -17,16 +15,15 @@
 #include "Plugins.h"
 #include "LogEmitter.h"
 #include "DeveloperConsole.h"
-#include "Global.h"
 #include "LCD.h"
 #ifdef USE_BONJOUR
-#include "BonjourClient.h"
+# include "BonjourClient.h"
 #endif
 #ifdef USE_DBUS
-#include "DBus.h"
+# include "DBus.h"
 #endif
 #ifdef USE_VLD
-#include "vld.h"
+# include "vld.h"
 #endif
 #include "VersionCheck.h"
 #include "NetworkConfig.h"
@@ -40,21 +37,23 @@
 #include "License.h"
 #include "EnvUtils.h"
 
-#if defined(Q_OS_WIN) && defined(QT_NO_DEBUG)
-#include <shellapi.h> // For CommandLineToArgvW()
+#include <QtCore/QLibraryInfo>
+#include <QtCore/QProcess>
+#include <QtCore/QStandardPaths>
+#include <QtCore/QTranslator>
+#include <QtGui/QDesktopServices>
+#include <QtWidgets/QMessageBox>
+
+#ifdef USE_DBUS
+# include <QtDBus/QDBusInterface>
 #endif
 
-#if defined(USE_STATIC_QT_PLUGINS) && QT_VERSION < 0x050000
-Q_IMPORT_PLUGIN(qtaccessiblewidgets)
-# ifdef Q_OS_WIN
-   Q_IMPORT_PLUGIN(qico)
-# endif
-Q_IMPORT_PLUGIN(qsvg)
-Q_IMPORT_PLUGIN(qsvgicon)
-# ifdef Q_OS_MAC
-   Q_IMPORT_PLUGIN(qicnsicon)
-# endif
+#if defined(Q_OS_WIN) && defined(QT_NO_DEBUG)
+# include <shellapi.h> // For CommandLineToArgvW()
 #endif
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
+#include "Global.h"
 
 #ifdef BOOST_NO_EXCEPTIONS
 namespace boost {
@@ -109,7 +108,7 @@ int main(int argc, char **argv) {
 	a.setAttribute(Qt::AA_UseHighDpiPixmaps);
 #endif
 
-#if QT_VERSION >= 0x050000 && defined(Q_OS_WIN)
+#ifdef Q_OS_WIN
 	a.installNativeEventFilter(&a);
 #endif
 
@@ -263,7 +262,7 @@ int main(int argc, char **argv) {
 
 	{
 		size_t reqSize;
-		if (_wgetenv_s(&reqSize, NULL, 0, L"PATH") != 0)) {
+		if (_wgetenv_s(&reqSize, NULL, 0, L"PATH") != 0) {
 			qWarning() << "Failed to get PATH. Not adding application directory to PATH. DBus bindings may not work.";
 		} else if (reqSize > 0) {
 			STACKVAR(wchar_t, buff, reqSize+1);
@@ -449,7 +448,7 @@ int main(int argc, char **argv) {
 
 #ifdef Q_OS_WIN
 	// Set mumble_mw_hwnd in os_win.cpp.
-	// Used by APIs in ASIOInput, DirectSound and GlobalShortcut_win that require a HWND.
+	// Used by APIs in ASIOInput and GlobalShortcut_win that require a HWND.
 	mumble_mw_hwnd = GetForegroundWindow();
 #endif
 
@@ -497,12 +496,7 @@ int main(int argc, char **argv) {
 	g.s.uiUpdateCounter = 2;
 
 	if (! CertWizard::validateCert(g.s.kpCertificate)) {
-#if QT_VERSION >= 0x050000
 		QDir qd(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
-#else
-		QDir qd(QDesktopServices::storageLocation(QDesktopServices::DocumentsLocation));
-#endif
-
 		QFile qf(qd.absoluteFilePath(QLatin1String("MumbleAutomaticCertificateBackup.p12")));
 		if (qf.open(QIODevice::ReadOnly | QIODevice::Unbuffered)) {
 			Settings::KeyPair kp = CertWizard::importCert(qf.readAll());
@@ -604,10 +598,8 @@ int main(int argc, char **argv) {
 	Global::g_global_struct = NULL;
 
 #ifndef QT_NO_DEBUG
-	// Hide Qt memory leak.
-	QSslSocket::setDefaultCaCertificates(QList<QSslCertificate>());
-	// Release global protobuf memory allocations.
 #if (GOOGLE_PROTOBUF_VERSION >= 2001000)
+	// Release global protobuf memory allocations.
 	google::protobuf::ShutdownProtobufLibrary();
 #endif
 #endif

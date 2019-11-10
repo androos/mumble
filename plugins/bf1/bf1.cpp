@@ -13,7 +13,7 @@ static int fetch(float *avatar_pos, float *avatar_front, float *avatar_top, floa
 
 	bool ok, state;
 	char server_name[100], team[4];
-	BYTE squad, squad_leader;
+	uint8_t squad, squad_leader;
 
 	// State pointers
 	procptr_t state_base = peekProcPtr(pModule + 0x33DBD08);
@@ -107,7 +107,7 @@ static int fetch(float *avatar_pos, float *avatar_front, float *avatar_top, floa
 	oidentity << "{";
 
 	// Team
-	escape(team, sizeof(server_name));
+	escape(team, sizeof(team));
 	if (strcmp(team, "") != 0) {
 		oidentity << std::endl << "\"Team\": \"" << team << "\","; // Set team name in identity.
 	}

@@ -3,11 +3,16 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "AudioOutputSample.h"
 
 #include "Audio.h"
+#include "Utils.h"
+
+#include <QtCore/QDebug>
+#include <QtWidgets/QFileDialog>
+#include <QtWidgets/QMessageBox>
+
+#include <cmath>
 
 SoundFile::SoundFile(const QString &fname) {
 	siInfo.frames = 0;
@@ -189,7 +194,7 @@ QString AudioOutputSample::browseForSndfile(QString defaultpath) {
 		if (sf == NULL) {
 			QMessageBox::critical(NULL,
 			                      tr("Invalid sound file"),
-			                      tr("The file '%1' cannot be used by Mumble. Please select a file with a compatible format and encoding.").arg(Qt::escape(file)));
+			                      tr("The file '%1' cannot be used by Mumble. Please select a file with a compatible format and encoding.").arg(file.toHtmlEscaped()));
 			return QString();
 		}
 		delete sf;
@@ -197,7 +202,7 @@ QString AudioOutputSample::browseForSndfile(QString defaultpath) {
 	return file;
 }
 
-bool AudioOutputSample::needSamples(unsigned int snum) {
+bool AudioOutputSample::prepareSampleBuffer(unsigned int snum) {
 	// Forward the buffer
 	for (unsigned int i=iLastConsume;i<iBufferFilled;++i)
 		pfBuffer[i-iLastConsume]=pfBuffer[i];

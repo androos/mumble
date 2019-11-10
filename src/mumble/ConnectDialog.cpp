@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "ConnectDialog.h"
 
 #ifdef USE_BONJOUR
@@ -18,6 +16,27 @@
 #include "ServerHandler.h"
 #include "WebFetch.h"
 #include "ServerResolver.h"
+#include "Utils.h"
+
+#include <QtCore/QMimeData>
+#include <QtCore/QUrlQuery>
+#include <QtCore/QtEndian>
+#include <QtGui/QClipboard>
+#include <QtGui/QDesktopServices>
+#include <QtGui/QPainter>
+#include <QtNetwork/QUdpSocket>
+#include <QtWidgets/QInputDialog>
+#include <QtWidgets/QMenu>
+#include <QtWidgets/QMessageBox>
+#include <QtWidgets/QShortcut>
+#include <QtXml/QDomDocument>
+
+#include <boost/accumulators/statistics/extended_p_square.hpp>
+#include <boost/array.hpp>
+
+#ifdef Q_OS_WIN
+# include <shlobj.h>
+#endif
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -396,16 +415,10 @@ ServerItem *ServerItem::fromMimeData(const QMimeData *mime, bool default_name, Q
 	}
 
 	if (default_name) {
-#if QT_VERSION >= 0x050000
 		QUrlQuery query(url);
 		if (! query.hasQueryItem(QLatin1String("title"))) {
 			query.addQueryItem(QLatin1String("title"), url.host());
 		}
-#else
-		if (! url.hasQueryItem(QLatin1String("title"))) {
-			url.addQueryItem(QLatin1String("title"), url.host());
-		}
-#endif
 	}
 
 	if (! url.isValid()) {
@@ -435,9 +448,7 @@ ServerItem *ServerItem::fromUrl(QUrl url, QWidget *p) {
 		return NULL;
 	}
 
-#if QT_VERSION >= 0x050000
 	QUrlQuery query(url);
-#endif
 
 	if (url.userName().isEmpty()) {
 		if (g.s.qsUsername.isEmpty()) {
@@ -452,17 +463,10 @@ ServerItem *ServerItem::fromUrl(QUrl url, QWidget *p) {
 		url.setUserName(g.s.qsUsername);
 	}
 
-#if QT_VERSION >= 0x050000
 	ServerItem *si = new ServerItem(query.queryItemValue(QLatin1String("title")), url.host(), static_cast<unsigned short>(url.port(DEFAULT_MUMBLE_PORT)), url.userName(), url.password());
 
 	if (query.hasQueryItem(QLatin1String("url")))
 		si->qsUrl = query.queryItemValue(QLatin1String("url"));
-#else
-	ServerItem *si = new ServerItem(url.queryItemValue(QLatin1String("title")), url.host(), static_cast<unsigned short>(url.port(DEFAULT_MUMBLE_PORT)), url.userName(), url.password());
-
-	if (url.hasQueryItem(QLatin1String("url")))
-		si->qsUrl = url.queryItemValue(QLatin1String("url"));
-#endif
 
 	return si;
 }
@@ -502,7 +506,8 @@ QVariant ServerItem::data(int column, int role) const {
 		} else if (role == Qt::ToolTipRole) {
 			QStringList qsl;
 			foreach(const ServerAddress &addr, qlAddresses) {
-				qsl << Qt::escape(addr.host.toString() + QLatin1String(":") + QString::number(static_cast<unsigned long>(addr.port)));
+				const QString qsAddress = addr.host.toString() + QLatin1String(":") + QString::number(static_cast<unsigned long>(addr.port));
+				qsl << qsAddress.toHtmlEscaped();
 			}
 
 			double ploss = 100.0;
@@ -513,18 +518,18 @@ QVariant ServerItem::data(int column, int role) const {
 			QString qs;
 			qs +=
 			    QLatin1String("<table>") +
-			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Servername"), Qt::escape(qsName)) +
-			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Hostname"), Qt::escape(qsHostname));
+			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Servername"), qsName.toHtmlEscaped()) +
+			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Hostname"), qsHostname.toHtmlEscaped());
 
 			if (! qsBonjourHost.isEmpty())
-				qs += QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Bonjour name"), Qt::escape(qsBonjourHost));
+				qs += QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Bonjour name"), qsBonjourHost.toHtmlEscaped());
 
 			qs +=
 			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Port")).arg(usPort) +
 			    QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Addresses"), qsl.join(QLatin1String(", ")));
 
 			if (! qsUrl.isEmpty())
-				qs += QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Website"), Qt::escape(qsUrl));
+				qs += QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Website"), qsUrl.toHtmlEscaped());
 
 			if (uiSent > 0) {
 				qs += QString::fromLatin1("<tr><th align=left>%1</th><td>%2</td></tr>").arg(ConnectDialog::tr("Packet loss"), QString::fromLatin1("%1% (%2/%3)").arg(ploss, 0, 'f', 1).arg(uiRecv).arg(uiSent));
@@ -652,15 +657,10 @@ QMimeData *ServerItem::toMimeData(const QString &name, const QString &host, unsi
 		url.setPort(port);
 	url.setPath(channel);
 
-#if QT_VERSION >= 0x050000
 	QUrlQuery query;
 	query.addQueryItem(QLatin1String("title"), name);
 	query.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
 	url.setQuery(query);
-#else
-	url.addQueryItem(QLatin1String("title"), name);
-	url.addQueryItem(QLatin1String("version"), QLatin1String("1.2.0"));
-#endif
 
 	QString qs = QLatin1String(url.toEncoded());
 
@@ -704,7 +704,7 @@ QMimeData *ServerItem::toMimeData(const QString &name, const QString &host, unsi
 	mime->setUrls(urls);
 
 	mime->setText(qs);
-	mime->setHtml(QString::fromLatin1("<a href=\"%1\">%2</a>").arg(qs).arg(Qt::escape(name)));
+	mime->setHtml(QString::fromLatin1("<a href=\"%1\">%2</a>").arg(qs).arg(name.toHtmlEscaped()));
 
 	return mime;
 }
@@ -992,7 +992,6 @@ ConnectDialog::ConnectDialog(QWidget *p, bool autoconnect) : QDialog(p), bAutoCo
 
 	qtwServers->sortItems(1, Qt::AscendingOrder);
 
-#if QT_VERSION >= 0x050000
 	qtwServers->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 	if (qtwServers->columnCount() >= 2) {
 		qtwServers->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
@@ -1000,15 +999,6 @@ ConnectDialog::ConnectDialog(QWidget *p, bool autoconnect) : QDialog(p), bAutoCo
 	if (qtwServers->columnCount() >= 3) {
 		qtwServers->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
 	}
-#else
-	qtwServers->header()->setResizeMode(0, QHeaderView::Stretch);
-	if (qtwServers->columnCount() >= 2) {
-		qtwServers->header()->setResizeMode(1, QHeaderView::ResizeToContents);
-	}
-	if (qtwServers->columnCount() >= 3) {
-		qtwServers->header()->setResizeMode(2, QHeaderView::ResizeToContents);
-	}
-#endif
 
 	connect(qtwServers->header(), SIGNAL(sortIndicatorChanged(int, Qt::SortOrder)), this, SLOT(OnSortChanged(int, Qt::SortOrder)));
 
@@ -1062,13 +1052,13 @@ ConnectDialog::ConnectDialog(QWidget *p, bool autoconnect) : QDialog(p), bAutoCo
 #ifdef USE_BONJOUR
 	// Make sure the we got the objects we need, then wire them up
 	if (bAllowBonjour && g.bc->bsbBrowser && g.bc->bsrResolver) {
-		connect(g.bc->bsbBrowser, SIGNAL(error(DNSServiceErrorType)),
+		connect(g.bc->bsbBrowser.data(), SIGNAL(error(DNSServiceErrorType)),
 		        this, SLOT(onLanBrowseError(DNSServiceErrorType)));
-		connect(g.bc->bsbBrowser, SIGNAL(currentBonjourRecordsChanged(const QList<BonjourRecord> &)),
+		connect(g.bc->bsbBrowser.data(), SIGNAL(currentBonjourRecordsChanged(const QList<BonjourRecord> &)),
 		        this, SLOT(onUpdateLanList(const QList<BonjourRecord> &)));
-		connect(g.bc->bsrResolver, SIGNAL(error(BonjourRecord, DNSServiceErrorType)),
+		connect(g.bc->bsrResolver.data(), SIGNAL(error(BonjourRecord, DNSServiceErrorType)),
 		        this, SLOT(onLanResolveError(BonjourRecord, DNSServiceErrorType)));
-		connect(g.bc->bsrResolver, SIGNAL(bonjourRecordResolved(BonjourRecord, QString, int)),
+		connect(g.bc->bsrResolver.data(), SIGNAL(bonjourRecordResolved(BonjourRecord, QString, int)),
 		        this, SLOT(onResolved(BonjourRecord, QString, int)));
 		onUpdateLanList(g.bc->bsbBrowser->currentRecords());
 	}
@@ -1155,12 +1145,16 @@ void ConnectDialog::accept() {
 }
 
 void ConnectDialog::OnSortChanged(int logicalIndex, Qt::SortOrder) {
-	if (logicalIndex == 2)
-		foreach(ServerItem *si, qlItems)
-			if (si->uiPing && (si->uiPing != si->uiPingSort)) {
-				si->uiPingSort = si->uiPing;
-				si->setDatas();
-			}
+	if (logicalIndex != 2) {
+		return;
+	}
+
+	foreach(ServerItem *si, qlItems) {
+		if (si->uiPing && (si->uiPing != si->uiPingSort)) {
+			si->uiPingSort = si->uiPing;
+			si->setDatas();
+		}
+	}
 }
 
 void ConnectDialog::on_qaFavoriteAdd_triggered() {
@@ -1356,13 +1350,10 @@ void ConnectDialog::initList() {
 
 	QUrl url;
 	url.setPath(QLatin1String("/v1/list"));
-#if QT_VERSION >= 0x050000
+
 	QUrlQuery query;
 	query.addQueryItem(QLatin1String("version"), QLatin1String(MUMTEXT(MUMBLE_VERSION_STRING)));
 	url.setQuery(query);
-#else
-	url.addQueryItem(QLatin1String("version"), QLatin1String(MUMTEXT(MUMBLE_VERSION_STRING)));
-#endif
 
 	WebFetch::fetch(QLatin1String("publist"), url, this, SLOT(fetched(QByteArray,QUrl,QMap<QString,QString>)));
 }

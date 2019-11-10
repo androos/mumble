@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "Plugins.h"
 
 #include "Log.h"
@@ -15,6 +13,22 @@
 #include "WebFetch.h"
 #include "MumbleApplication.h"
 #include "ManualPlugin.h"
+#include "Utils.h"
+
+#include <QtCore/QLibrary>
+#include <QtCore/QUrlQuery>
+
+#ifdef Q_OS_WIN
+# include <QtCore/QTemporaryFile>
+#endif
+
+#include <QtWidgets/QMessageBox>
+#include <QtXml/QDomDocument>
+
+#ifdef Q_OS_WIN
+# include <softpub.h>
+# include <tlhelp32.h>
+#endif
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -59,13 +73,8 @@ struct PluginFetchMeta {
 PluginConfig::PluginConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
 
-#if QT_VERSION >= 0x050000
 	qtwPlugins->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 	qtwPlugins->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-#else
-	qtwPlugins->header()->setResizeMode(0, QHeaderView::Stretch);
-	qtwPlugins->header()->setResizeMode(1, QHeaderView::ResizeToContents);
-#endif
 
 	refillPluginList();
 }
@@ -163,7 +172,7 @@ void PluginConfig::refillPluginList() {
 		i->setCheckState(1, pi->enabled ? Qt::Checked : Qt::Unchecked);
 		i->setText(0, pi->description);
 		if (pi->p->longdesc)
-			i->setToolTip(0, Qt::escape(QString::fromStdWString(pi->p->longdesc())));
+			i->setToolTip(0, QString::fromStdWString(pi->p->longdesc()).toHtmlEscaped());
 		i->setData(0, Qt::UserRole, pi->filename);
 	}
 	qtwPlugins->setCurrentItem(qtwPlugins->topLevelItem(0));
@@ -416,7 +425,7 @@ void Plugins::on_Timer_timeout() {
 	QReadLocker lock(&qrwlPlugins);
 
 	if (prevlocked) {
-		g.l->log(Log::Information, tr("%1 lost link.").arg(Qt::escape(prevlocked->shortname)));
+		g.l->log(Log::Information, tr("%1 lost link.").arg(prevlocked->shortname.toHtmlEscaped()));
 		prevlocked = NULL;
 	}
 
@@ -539,7 +548,7 @@ void Plugins::on_Timer_timeout() {
 	if (pi->enabled) {
 		if (pi->p2 ? pi->p2->trylock(pids) : pi->p->trylock()) {
 			pi->shortname = QString::fromStdWString(pi->p->shortname);
-			g.l->log(Log::Information, tr("%1 linked.").arg(Qt::escape(pi->shortname)));
+			g.l->log(Log::Information, tr("%1 linked.").arg(pi->shortname.toHtmlEscaped()));
 			pi->locked = true;
 			bUnlink = false;
 			locked = pi;
@@ -572,16 +581,10 @@ void Plugins::checkUpdates() {
 
 
 #ifdef QT_NO_DEBUG
-#if QT_VERSION >= 0x050000
 	QUrlQuery query;
 	query.setQueryItems(queryItems);
 	url.setQuery(query);
-#else
-	for (int i = 0; i < queryItems.size(); i++) {
-		const QPair<QString, QString> &queryPair = queryItems.at(i);
-		url.addQueryItem(queryPair.first, queryPair.second);
-	}
-#endif
+
 	WebFetch::fetch(QLatin1String("update"), url, this, SLOT(fetchedUpdatePAPlugins(QByteArray,QUrl)));
 #else
 	g.mw->msgBox(tr("Skipping plugin update in debug mode."));
@@ -752,15 +755,15 @@ void Plugins::fetchedPAPluginDL(QByteArray data, QUrl url) {
 				if (f.open(QIODevice::WriteOnly)) {
 					f.write(data);
 					f.close();
-					g.mw->msgBox(tr("Downloaded new or updated plugin to %1.").arg(Qt::escape(f.fileName())));
+					g.mw->msgBox(tr("Downloaded new or updated plugin to %1.").arg(f.fileName().toHtmlEscaped()));
 				} else {
 					f.setFileName(qsUserPlugins + QLatin1String("/") + fname);
 					if (f.open(QIODevice::WriteOnly)) {
 						f.write(data);
 						f.close();
-						g.mw->msgBox(tr("Downloaded new or updated plugin to %1.").arg(Qt::escape(f.fileName())));
+						g.mw->msgBox(tr("Downloaded new or updated plugin to %1.").arg(f.fileName().toHtmlEscaped()));
 					} else {
-						g.mw->msgBox(tr("Failed to install new plugin to %1.").arg(Qt::escape(f.fileName())));
+						g.mw->msgBox(tr("Failed to install new plugin to %1.").arg(f.fileName().toHtmlEscaped()));
 					}
 				}
 

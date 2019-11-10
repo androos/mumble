@@ -3,11 +3,14 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "murmur_pch.h"
-
-#include "Server.h"
 #include "ServerUser.h"
+
 #include "Meta.h"
+#include "Server.h"
+
+#ifdef Q_OS_UNIX
+# include "Utils.h"
+#endif
 
 ServerUser::ServerUser(Server *p, QSslSocket *socket) : Connection(p, socket), User(), s(NULL), leakyBucket(p->iMessageLimit, p->iMessageBurst) {
 	sState = ServerUser::Connected;
@@ -91,7 +94,6 @@ int BandwidthRecord::bandwidth() const {
 	QMutexLocker ml(&qmMutex);
 
 	int sum = 0;
-	int records = 0;
 	quint64 elapsed = 0ULL;
 
 	for (int i=1;i<N_BANDWIDTH_SLOTS;++i) {
@@ -100,7 +102,6 @@ int BandwidthRecord::bandwidth() const {
 		if (e > 1000000ULL) {
 			break;
 		} else {
-			++records;
 			sum += a_iBW[idx];
 			elapsed = e;
 		}
@@ -112,11 +113,11 @@ int BandwidthRecord::bandwidth() const {
 	return static_cast<int>((sum * 1000000ULL) / elapsed);
 }
 
-inline static QTime now() {
-	return QTime::currentTime();
+inline static QDateTime now() {
+	return QDateTime::currentDateTimeUtc();
 }
 
-inline static int millisecondsBetween(const QTime &start, const QTime &end) {
+inline static int millisecondsBetween(const QDateTime &start, const QDateTime &end) {
 	return start.msecsTo(end);
 }
 
@@ -127,7 +128,7 @@ LeakyBucket::LeakyBucket(unsigned int tokensPerSec, unsigned int maxTokens) : to
 
 bool LeakyBucket::ratelimit(int tokens) {
 	// First remove tokens we leaked over time
-	const QTime tnow = now();
+	const QDateTime tnow = now();
 	const long ms = millisecondsBetween(lastUpdate, tnow);
 
 	const long drainTokens = (ms * tokensPerSec) / 1000;
@@ -140,6 +141,11 @@ bool LeakyBucket::ratelimit(int tokens) {
 		if (this->currentTokens < 0) {
 			this->currentTokens = 0;
 		}
+	} else if (ms < 0) {
+
+		// Time went back for some reason. Reset lastUpdate to make sure
+		// it's tracking the current time base.
+		this->lastUpdate = tnow;
 	}
 
 	// Then try to add tokens

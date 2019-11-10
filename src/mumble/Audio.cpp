@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "Audio.h"
 
 #include "AudioInput.h"
@@ -60,21 +58,6 @@ void CodecInit::initialize() {
 	} else {
 		delete codec;
 		codec = new CELTCodec070(QLatin1String("0.0.0"));
-		if (codec->isValid()) {
-			codec->report();
-			g.qmCodecs.insert(codec->bitstreamVersion(), codec);
-		} else {
-			delete codec;
-		}
-	}
-
-	codec = new CELTCodec011(QLatin1String("0.11.0"));
-	if (codec->isValid()) {
-		codec->report();
-		g.qmCodecs.insert(codec->bitstreamVersion(), codec);
-	} else {
-		delete codec;
-		codec = new CELTCodec011(QLatin1String("2.0.0"));
 		if (codec->isValid()) {
 			codec->report();
 			g.qmCodecs.insert(codec->bitstreamVersion(), codec);

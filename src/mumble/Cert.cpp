@@ -11,12 +11,22 @@
 # pragma GCC diagnostic ignored "-Wold-style-cast"
 #endif
 
-#include "mumble_pch.hpp"
-
 #include "Cert.h"
 
-#include "Global.h"
 #include "SelfSignedCertificate.h"
+#include "Utils.h"
+
+#include <QtCore/QUrl>
+#include <QtGui/QDesktopServices>
+#include <QtWidgets/QFileDialog>
+#include <QtWidgets/QToolTip>
+
+#include <openssl/evp.h>
+#include <openssl/pkcs12.h>
+#include <openssl/x509.h>
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
+#include "Global.h"
 
 #define SSL_STRING(x) QString::fromLatin1(x).toUtf8().data()
 
@@ -69,7 +79,6 @@ void CertView::setCert(const QList<QSslCertificate> &cert) {
 	} else {
 		QSslCertificate qscCert = qlCert.at(0);
 
-#if QT_VERSION >= 0x050000
 		const QStringList &names = qscCert.subjectInfo(QSslCertificate::CommonName);
 		QString name;
 		if (names.count() > 0) {
@@ -77,10 +86,6 @@ void CertView::setCert(const QList<QSslCertificate> &cert) {
 		}
 
 		QStringList emails = qscCert.subjectAlternativeNames().values(QSsl::EmailEntry);
-#else
-		const QString &name = qscCert.subjectInfo(QSslCertificate::CommonName);
-		QStringList emails(qscCert.alternateSubjectNames().values(QSsl::EmailEntry));
-#endif
 
 		QString tmpName = name;
 		tmpName = tmpName.replace(QLatin1String("\\x"), QLatin1String("%"));
@@ -94,22 +99,19 @@ void CertView::setCert(const QList<QSslCertificate> &cert) {
 			qlSubjectEmail->setText(tr("(none)"));
 
 		if (qscCert.expiryDate() <= QDateTime::currentDateTime())
-			qlExpiry->setText(QString::fromLatin1("<font color=\"red\"><b>%1</b></font>").arg(Qt::escape(qscCert.expiryDate().toString(Qt::SystemLocaleDate))));
+			qlExpiry->setText(QString::fromLatin1("<font color=\"red\"><b>%1</b></font>").arg(qscCert.expiryDate().toString(Qt::SystemLocaleDate).toHtmlEscaped()));
 		else
 			qlExpiry->setText(qscCert.expiryDate().toString(Qt::SystemLocaleDate));
 
 		if (qlCert.count() > 1)
 			qscCert = qlCert.last();
 
-#if QT_VERSION >= 0x050000
 		const QStringList &issuerNames = qscCert.issuerInfo(QSslCertificate::CommonName);
 		QString issuerName;
 		if (issuerNames.count() > 0) {
 			issuerName = issuerNames.at(0);
 		}
-#else
-		const QString &issuerName = qscCert.issuerInfo(QSslCertificate::CommonName);
-#endif
+
 		qlIssuerName->setText((issuerName == name) ? tr("Self-signed") : issuerName);
 	}
 }

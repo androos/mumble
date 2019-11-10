@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "murmur_pch.h"
-
 #include "ServerResolver.h"
 
 #include <QtNetwork/QDnsLookup>
@@ -159,4 +157,4 @@ QList<ServerResolverRecord> ServerResolver::records() {
 	return QList<ServerResolverRecord>();
 }
 
-#include "ServerResolver_qt5.moc"
+#include "ServerResolver.moc"

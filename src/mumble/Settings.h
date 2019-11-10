@@ -185,6 +185,7 @@ struct Settings {
 	QString qsTTSLanguage;
 	int iQuality, iMinLoudness, iVoiceHold, iJitterBufferSize;
 	int iNoiseSuppress;
+	bool bAllowLowDelay;
 	bool bDenoise;
 	quint64 uiAudioInputChannelMask;
 
@@ -205,7 +206,6 @@ struct Settings {
 	bool bOnlyAttenuateSameOutput;
 	bool bAttenuateLoopbacks;
 	int iOutputDelay;
-	bool bUseOpusMusicEncoding;
 
 	QString qsALSAInput, qsALSAOutput;
 	QString qsPulseAudioInput, qsPulseAudioOutput;
@@ -244,8 +244,6 @@ struct Settings {
 	/// from Windows: https://msdn.microsoft.com/en-us/library/windows/desktop/dd370842
 	QString qsWASAPIRole;
 
-	QByteArray qbaDXInput, qbaDXOutput;
-
 	bool bExclusiveInput, bExclusiveOutput;
 	bool bEcho;
 	bool bEchoMulti;
@@ -280,6 +278,7 @@ struct Settings {
 
 	enum MessageLog { LogNone = 0x00, LogConsole = 0x01, LogTTS = 0x02, LogBalloon = 0x04, LogSoundfile = 0x08, LogHighlight = 0x10 };
 	int iMaxLogBlocks;
+	bool bLog24HourClock;
 	QMap<int, QString> qmMessageSounds;
 	QMap<int, quint32> qmMessages;
 

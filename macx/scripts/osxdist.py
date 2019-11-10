@@ -134,7 +134,7 @@ class AppBundle(object):
 		print ' * Attempting to copy audio codec libraries into App Bundle'
 		dst = os.path.join(self.bundle, 'Contents', 'Codecs')
 		os.makedirs(dst)
-		codecs = ('release/libcelt0.0.7.0.dylib', 'release/libcelt0.0.11.0.dylib', 'release/libopus.dylib')
+		codecs = ('release/libcelt0.0.7.0.dylib', 'release/libopus.dylib')
 		for codec in codecs:
 			if os.path.exists(codec):
 				shutil.copy(codec, dst)
@@ -158,17 +158,6 @@ class AppBundle(object):
 			p = self.infoplist
 			p['CFBundleVersion'] = self.version
 			plistlib.writePlist(p, self.infopath)
-
-	def add_compat_warning(self):
-		'''
-			Add compat binary for when our binary is run on i386 or ppc.
-			The compat binary displays a warning dialog telling the user that they need to download a universal version of Mumble
-		'''
-		print ' * Splicing Mumble.compat into main bundle executable'
-		p = Popen(('lipo', '-create', 'release/Mumble.compat', '-arch', 'x86_64', self.binary, '-output', self.binary))
-		retval = p.wait()
-		if retval != 0:
-			raise Exception('build-overlay-installer failed')
 
 	def set_min_macosx_version(self, version):
 		'''
@@ -296,9 +285,7 @@ def package_client():
 	a.copy_resources(['icons/mumble.icns'])
 	a.update_plist()
 	if not options.universal:
-		if options.compat_warning:
-			a.add_compat_warning()
-		a.set_min_macosx_version('10.6.0')
+		a.set_min_macosx_version('10.9.0')
 	else:
 		a.set_min_macosx_version('10.4.8')
 	a.done()
@@ -311,7 +298,6 @@ def package_client():
 			'release/Mumble.app/Contents/Plugins/liblink.dylib',
 			'release/Mumble.app/Contents/Plugins/libmanual.dylib',
 			'release/Mumble.app/Contents/Codecs/libcelt0.0.7.0.dylib',
-			'release/Mumble.app/Contents/Codecs/libcelt0.0.11.0.dylib',
 			'release/Mumble.app/Contents/Codecs/libopus.dylib',
 			'release/Mumble.app/Contents/MacOS/mumble-g15-helper',
 			'release/Mumble.app/Contents/MacOS/sbcelt-helper',
@@ -389,7 +375,6 @@ if __name__ == '__main__':
 	parser.add_option('', '--universal', dest='universal', help='Build an universal snapshot.', action='store_true', default=False)
 	parser.add_option('', '--only-appbundle', dest='only_appbundle', help='Only prepare the appbundle. Do not package.', action='store_true', default=False)
 	parser.add_option('', '--only-overlay', dest='only_overlay', help='Only create the overlay installer.', action='store_true', default=False)
-	parser.add_option('', '--no-compat-warning', dest='compat_warning', help='No warning message when running the image on x86. This option should only be used when the warning application cannot be built as 32 bit (rendering it useless).', action='store_false', default=True)
 	parser.add_option('', '--developer-id', dest='developer_id', help='Identity (Developer ID) to use for code signing. The name is also used for GPG signing. (If not set, no code signing will occur)')
 	parser.add_option('', '--keychain', dest='keychain', help='The keychain to use when invoking code signing utilities. (Defaults to login.keychain', default='login.keychain')
 	parser.add_option('', '--server', dest='server', help='Build a Murmur package.', action='store_true', default=False)

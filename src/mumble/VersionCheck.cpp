@@ -3,12 +3,24 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "VersionCheck.h"
 
 #include "MainWindow.h"
+#include "Utils.h"
 #include "WebFetch.h"
+
+#ifdef Q_OS_WIN
+# include "win.h"
+#endif
+
+#include <QtCore/QUrlQuery>
+#include <QtXml/QDomDocument>
+#include <QtWidgets/QMessageBox>
+
+#ifdef Q_OS_WIN
+# include <shellapi.h>
+# include <softpub.h>
+#endif
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -55,16 +67,10 @@ VersionCheck::VersionCheck(bool autocheck, QObject *p, bool focus) : QObject(p) 
 		}
 	}
 
-#if QT_VERSION >= 0x050000
 	QUrlQuery query;
 	query.setQueryItems(queryItems);
 	url.setQuery(query);
-#else
-	for (int i = 0; i < queryItems.size(); i++) {
-		const QPair<QString, QString> &queryPair = queryItems.at(i);
-		url.addQueryItem(queryPair.first, queryPair.second);
-	}
-#endif
+
 	WebFetch::fetch(QLatin1String("update"), url, this, SLOT(fetched(QByteArray,QUrl)));
 }
 
@@ -161,7 +167,7 @@ void VersionCheck::fetched(QByteArray a, QUrl url) {
 							file.remove();
 						}
 					} else {
-						g.mw->msgBox(tr("Downloading new snapshot from %1 to %2").arg(Qt::escape(fetch.toString()), Qt::escape(filename)));
+						g.mw->msgBox(tr("Downloading new snapshot from %1 to %2").arg(fetch.toString().toHtmlEscaped(), filename.toHtmlEscaped()));
 						WebFetch::fetch(QLatin1String("dl"), fetch, this, SLOT(fetched(QByteArray,QUrl)));
 						return;
 					}

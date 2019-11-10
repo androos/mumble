@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #import <AppKit/AppKit.h>
 #import <Carbon/Carbon.h>
 
@@ -205,14 +203,10 @@ void GlobalShortcutMac::dumpEventTaps() {
 		for (uint32_t i = 0; i < ntaps; i++) {
 			CGEventTapInformation *info = &table[i];
 
-			ProcessSerialNumber psn;
 			NSString *processName = nil;
-			OSStatus err = GetProcessForPID(info->tappingProcess, &psn);
-			if (err == noErr) {
-				CFStringRef str = NULL;
-				CopyProcessName(&psn, &str);
-				processName = (NSString *) str;
-				[processName autorelease];
+			NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier: info->processBeingTapped];
+			if (app) {
+				processName = [app localizedName];
 			}
 
 			qWarning("{");

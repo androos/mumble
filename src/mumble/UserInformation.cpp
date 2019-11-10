@@ -3,8 +3,6 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "UserInformation.h"
 
 #include "Audio.h"
@@ -12,6 +10,8 @@
 #include "HostAddress.h"
 #include "ServerHandler.h"
 #include "ViewCert.h"
+
+#include <QtCore/QUrl>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -21,14 +21,12 @@ static QString decode_utf8_qssl_string(const QString &input) {
 	return QUrl::fromPercentEncoding(i.replace(QLatin1String("\\x"), QLatin1String("%")).toLatin1());
 }
 
-#if QT_VERSION >= 0x050000
 static QString decode_utf8_qssl_string(const QStringList &list) {
 	if (list.count() > 0) {
 		return decode_utf8_qssl_string(list.at(0));
 	}
 	return QString();
 }
-#endif
 
 UserInformation::UserInformation(const MumbleProto::UserStats &msg, QWidget *p) : QDialog(p) {
 	setupUi(this);
@@ -115,12 +113,7 @@ void UserInformation::update(const MumbleProto::UserStats &msg) {
 			qpbCertificate->setEnabled(true);
 
 			const QSslCertificate &cert = qlCerts.last();
-
-#if QT_VERSION >= 0x050000
 			const QMultiMap<QSsl::AlternativeNameEntryType, QString> &alts = cert.subjectAlternativeNames();
-#else
-			const QMultiMap<QSsl::AlternateNameEntryType, QString> &alts = cert.alternateSubjectNames();
-#endif
 			if (alts.contains(QSsl::EmailEntry))
 				qlCertificate->setText(QStringList(alts.values(QSsl::EmailEntry)).join(tr(", ")));
 			else

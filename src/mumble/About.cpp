@@ -3,12 +3,14 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "About.h"
 
 #include "MainWindow.h"
 #include "License.h"
+
+#include "Utils.h"
+
+#include <QtWidgets/QPushButton>
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -34,9 +36,9 @@ AboutDialog::AboutDialog(QWidget *p) : QDialog(p) {
 	QList<LicenseInfo> thirdPartyLicenses = License::thirdPartyLicenses();
 	foreach(LicenseInfo li, thirdPartyLicenses) {
 		qtb3rdPartyLicense->append(QString::fromLatin1("<h3>%1 (<a href=\"%2\">%2</a>)</h3><pre>%3</pre>")
-				.arg(Qt::escape(li.name))
-				.arg(Qt::escape(li.url))
-				.arg(Qt::escape(li.license)));
+				.arg(li.name.toHtmlEscaped())
+				.arg(li.url.toHtmlEscaped())
+				.arg(li.license.toHtmlEscaped()));
 	}
 
 	qtb3rdPartyLicense->moveCursor(QTextCursor::Start);

@@ -3,16 +3,17 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
+#include "ALSAAudio.h"
+
+#include "MainWindow.h"
+#include "User.h"
+#include "Utils.h"
 
 #include <alsa/asoundlib.h>
 #include <sys/poll.h>
 
-#include "ALSAAudio.h"
-
-#include "MainWindow.h"
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
-#include "User.h"
 
 #define NBLOCKS 8
 
@@ -90,7 +91,7 @@ const QList<audioDevice> ALSAAudioInputRegistrar::getDeviceChoices() {
 	QList<audioDevice> qlReturn;
 
 	QStringList qlInputDevs = cards->qhInput.keys();
-	qSort(qlInputDevs);
+	std::sort(qlInputDevs.begin(), qlInputDevs.end());
 
 	if (qlInputDevs.contains(g.s.qsALSAInput)) {
 		qlInputDevs.removeAll(g.s.qsALSAInput);
@@ -124,7 +125,7 @@ const QList<audioDevice> ALSAAudioOutputRegistrar::getDeviceChoices() {
 	QList<audioDevice> qlReturn;
 
 	QStringList qlOutputDevs = cards->qhOutput.keys();
-	qSort(qlOutputDevs);
+	std::sort(qlOutputDevs.begin(), qlOutputDevs.end());
 
 	if (qlOutputDevs.contains(g.s.qsALSAOutput)) {
 		qlOutputDevs.removeAll(g.s.qsALSAOutput);
@@ -337,7 +338,7 @@ void ALSAAudioInput::run() {
 			snd_pcm_close(capture_handle);
 			capture_handle = NULL;
 		}
-		g.mw->msgBox(tr("Opening chosen ALSA Input failed: %1").arg(Qt::escape(QLatin1String(snd_strerror(err)))));
+		g.mw->msgBox(tr("Opening chosen ALSA Input failed: %1").arg(QString::fromLatin1(snd_strerror(err)).toHtmlEscaped()));
 		return;
 	}
 
@@ -475,7 +476,7 @@ void ALSAAudioOutput::run() {
 			snd_pcm_writei(pcm_handle, zerobuff, period_size);
 
 	if (! bOk) {
-		g.mw->msgBox(tr("Opening chosen ALSA Output failed: %1").arg(Qt::escape(QLatin1String(snd_strerror(err)))));
+		g.mw->msgBox(tr("Opening chosen ALSA Output failed: %1").arg(QString::fromLatin1(snd_strerror(err)).toHtmlEscaped()));
 		if (pcm_handle) {
 			snd_pcm_close(pcm_handle);
 			pcm_handle = NULL;

@@ -6,6 +6,14 @@
 #ifndef MUMBLE_MUMBLE_PLUGIN_UTILS_H_
 #define MUMBLE_MUMBLE_PLUGIN_UTILS_H_
 
+#include <codecvt>
+#include <locale>
+
+static inline std::string utf16ToUtf8(const std::wstring &wstr) {
+	std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> conv;
+	return conv.to_bytes(wstr);
+}
+
 // escape lossily converts the given
 // string to ASCII, replacing any
 // character not within the printable
@@ -22,31 +30,29 @@
 // string is NUL-terminated by always
 // setting the last byte of the input
 // string to the value 0.
-static void escape(char *str, size_t size) {
-    // Ensure the input string is properly NUL-terminated.
-    str[size-1] = 0;
-    char *c = str;
+static inline void escape(char *str, const size_t &size) {
+	// Ensure the input string is properly NUL-terminated.
+	str[size - 1] = 0;
+	char *c = str;
 
-    while (*c != '\0') {
-        // For JSON compatibility, the string
-        // can't contain double quotes.
-        // If a double quote is found, replace
-        // it with an ASCII space.
-        if (*c == '"') {
-            *c = ' ';
-        }
+	while (*c != '\0') {
+		// For JSON compatibility, the string
+		// can't contain double quotes.
+		// If a double quote is found, replace
+		// it with an ASCII space.
+		if (*c == '"') {
+			*c = ' ';
+		}
 
-        // Ensure the string is within printable
-        // ASCII. If not, replace the offending
-        // byte with an ASCII space.
-        if (*c < 32) {
-            *c = ' ';
-        } else if (*c > 126) {
-            *c = ' ';
-        }
+		// Ensure the string is within printable
+		// ASCII. If not, replace the offending
+		// byte with an ASCII space.
+		if (*c < 32 || *c > 126) {
+			*c = ' ';
+		}
 
-        c += 1;
-    }
+		c += 1;
+	}
 }
 
 #endif

@@ -3,11 +3,16 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "mumble_pch.hpp"
-
 #include "ASIOInput.h"
 
 #include "MainWindow.h"
+#include "Utils.h"
+
+#include <QtWidgets/QMessageBox>
+
+#include <cmath>
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
 
 // From os_win.cpp.
@@ -251,7 +256,7 @@ void ASIOConfig::on_qpbQuery_clicked() {
 			char err[255];
 			iasio->getErrorMessage(err);
 			SleepEx(10, false);
-			QMessageBox::critical(this, QLatin1String("Mumble"), tr("ASIO Initialization failed: %1").arg(Qt::escape(QLatin1String(err))), QMessageBox::Ok, QMessageBox::NoButton);
+			QMessageBox::critical(this, QLatin1String("Mumble"), tr("ASIO Initialization failed: %1").arg(QString::fromLatin1(err).toHtmlEscaped()), QMessageBox::Ok, QMessageBox::NoButton);
 		}
 		iasio->Release();
 	} else {
@@ -276,7 +281,7 @@ void ASIOConfig::on_qpbConfig_clicked() {
 			char err[255];
 			iasio->getErrorMessage(err);
 			SleepEx(10, false);
-			QMessageBox::critical(this, QLatin1String("Mumble"), tr("ASIO Initialization failed: %1").arg(Qt::escape(QLatin1String(err))), QMessageBox::Ok, QMessageBox::NoButton);
+			QMessageBox::critical(this, QLatin1String("Mumble"), tr("ASIO Initialization failed: %1").arg(QString::fromLatin1(err).toHtmlEscaped()), QMessageBox::Ok, QMessageBox::NoButton);
 		}
 		iasio->Release();
 	} else {
@@ -391,8 +396,7 @@ ASIOInput::ASIOInput() {
 	iNumSpeaker=g.s.qlASIOspeaker.count();
 
 	if ((iNumMic == 0) || (iNumSpeaker == 0)) {
-		QMessageBox::warning(NULL, QLatin1String("Mumble"), tr("You need to select at least one microphone and one speaker source to use ASIO. "
-		                     "If you just need microphone sampling, use DirectSound."),  QMessageBox::Ok, QMessageBox::NoButton);
+		QMessageBox::warning(NULL, QLatin1String("Mumble"), tr("You need to select at least one microphone and one speaker source to use ASIO."),  QMessageBox::Ok, QMessageBox::NoButton);
 		return;
 	}
 
