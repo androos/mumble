@@ -86,7 +86,6 @@ HEADERS *= BanEditor.h \
     AudioOutputSpeech.h \
     AudioOutputUser.h \
     CELTCodec.h \
-    OpusCodec.h \
     CustomElements.h \
     MainWindow.h \
     ServerHandler.h \
@@ -158,7 +157,6 @@ SOURCES *= BanEditor.cpp \
     AudioOutputUser.cpp \
     main.cpp \
     CELTCodec.cpp \
-    OpusCodec.cpp \
     CustomElements.cpp \
     MainWindow.cpp \
     ServerHandler.cpp \
@@ -359,6 +357,8 @@ CONFIG(no-vorbis-recording) {
 unix:!CONFIG(bundled-opus):system($$PKG_CONFIG --exists opus) {
   must_pkgconfig(opus)
   DEFINES *= USE_OPUS
+  HEADERS *= OpusCodec.h
+  SOURCES *= OpusCodec.cpp
 } else {
   !CONFIG(no-opus) {
     CONFIG *= opus
@@ -367,6 +367,8 @@ unix:!CONFIG(bundled-opus):system($$PKG_CONFIG --exists opus) {
   CONFIG(opus) {
     INCLUDEPATH *= ../../3rdparty/opus-src/celt ../../3rdparty/opus-src/include ../../3rdparty/opus-src/src ../../3rdparty/opus-build/src
     DEFINES *= USE_OPUS
+    HEADERS *= OpusCodec.h
+    SOURCES *= OpusCodec.cpp
     unix {
       QMAKE_CFLAGS *= "-I../../3rdparty/opus-src/celt" "-isystem  ../../3rdparty/opus-src/celt"
       QMAKE_CFLAGS *= "-I../../3rdparty/opus-src/include" "-isystem ../../3rdparty/opus-src/include"
@@ -589,9 +591,9 @@ jackaudio {
 
 portaudio {
   DEFINES *= USE_PORTAUDIO
-  must_pkgconfig(portaudio-2.0)
   HEADERS *= PAAudio.h
   SOURCES *= PAAudio.cpp
+  INCLUDEPATH *= ../../3rdparty/portaudio-src
 }
 
 asio {
