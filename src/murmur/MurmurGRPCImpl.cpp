@@ -18,7 +18,11 @@
 #include "Channel.h"
 #include "Utils.h"
 
+#include <chrono>
+
 #include <QtCore/QStack>
+#include <QCryptographicHash>
+#include <QRegularExpression>
 
 #include "MurmurRPC.proto.Wrapper.cpp"
 
@@ -96,7 +100,8 @@ void GRPCStart() {
 	if (cert.isEmpty() || key.isEmpty()) {
 		credentials = ::grpc::InsecureServerCredentials();
 	} else {
-		::grpc::SslServerCredentialsOptions options;
+		std::shared_ptr<MurmurRPCAuthenticator> authenticator(new MurmurRPCAuthenticator());
+		::grpc::SslServerCredentialsOptions options(GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_BUT_DONT_VERIFY);
 		::grpc::SslServerCredentialsOptions::PemKeyCertPair pair;
 		{
 			QFile file(cert);
@@ -120,6 +125,7 @@ void GRPCStart() {
 		}
 		options.pem_key_cert_pairs.push_back(pair);
 		credentials = ::grpc::SslServerCredentials(options);
+		credentials->SetAuthMetadataProcessor(authenticator);
 	}
 
 	service = new MurmurRPCImpl(address, credentials);
@@ -131,6 +137,75 @@ void GRPCStop() {
 	delete service;
 }
 
+// Check for valid fingerprints from the config and give a warning
+// if there aren't any valid ones
+MurmurRPCAuthenticator::MurmurRPCAuthenticator() {
+	QRegularExpression re("^(?:[[:xdigit:]]{2}:?){32}$");
+	const auto &authorized = meta->mp.qsGRPCAuthorized;
+
+	for (auto&& user : authorized.split(' ')) {
+		if (!re.match(user).hasMatch()) {
+			qWarning("gRPC: %s is not a valid hexadecimal SHA256 digest, ignoring", qUtf8Printable(user));
+			continue;
+		}
+		m_gRPCUsers.insert(QByteArray::fromHex(user.toUtf8()));
+	}
+
+	if (m_gRPCUsers.empty()) {
+		qWarning("gRPC Security is enabled but no users are authorized to use the interface\n"
+			 "Please set grpcauthorized to a list of authorized clients");
+	}
+
+	return;
+}
+
+// Hash table lookup should be non-blocking
+bool MurmurRPCAuthenticator::IsBlocking() const {
+	return false;
+}
+
+// We don't use any metadata. Just check to see if the certificate fingerprint matches
+grpc::Status MurmurRPCAuthenticator::Process(const InputMetadata &authData, ::grpc::AuthContext *ctx, OutputMetadata *used, OutputMetadata* resp) {
+	QByteArray fingerprint;
+	QString identity;
+	QStringList identities;
+
+	(void) used;
+	(void) resp;
+	(void) authData;
+
+	for (auto&& i : ctx->GetPeerIdentity()) {
+		identities.append(QString::fromUtf8(i.data(), i.length()));
+	}
+	if (identities.empty()) {
+		identity = "Undefined";
+	} else {
+		identity = identities.join(':');
+	}
+
+	qDebug("Incoming connection from: %s", qUtf8Printable(identity));
+
+	for (auto&& pem : ctx->FindPropertyValues("x509_pem_cert")) {
+		QSslCertificate cert(QByteArray(pem.data(), pem.length()));
+		if (cert.isNull()) {
+			continue;
+		}
+
+		fingerprint = cert.digest(QCryptographicHash::Sha256);
+
+		if (!m_gRPCUsers.contains(fingerprint)) {
+			qDebug("Fingerprint %s not found", fingerprint.toHex(':').data());
+			continue;
+		}
+
+		qDebug("Fingerprint %s found", fingerprint.toHex(':').data());
+		return ::grpc::Status::OK;
+	}
+
+	qDebug("Connection from %s could not be validated", qUtf8Printable(identity));
+	return ::grpc::Status(::grpc::StatusCode::UNAUTHENTICATED, "Certificate invalid or not presented");
+}
+
 MurmurRPCImpl::MurmurRPCImpl(const QString &address, std::shared_ptr<::grpc::ServerCredentials> credentials) {
 	::grpc::ServerBuilder builder;
 	builder.AddListeningPort(u8(address), credentials);
@@ -138,10 +213,22 @@ MurmurRPCImpl::MurmurRPCImpl(const QString &address, std::shared_ptr<::grpc::Ser
 	m_completionQueue = builder.AddCompletionQueue();
 	m_server = builder.BuildAndStart();
 	meta->connectListener(this);
+	m_isRunning = true;
 	start();
 }
 
 MurmurRPCImpl::~MurmurRPCImpl() {
+	void *ignored_tag;
+	bool ignored_ok;
+	m_isRunning = false;
+	m_server->Shutdown(std::chrono::system_clock::now());
+	m_completionQueue->Shutdown();
+	while (m_completionQueue->Next(&ignored_tag, &ignored_ok)) {
+		if (ignored_tag) {
+			auto op = static_cast<boost::function<void(bool)> *>(ignored_tag);
+			delete op;
+		}
+	}
 }
 
 // ToRPC/FromRPC methods convert data to/from grpc protocol buffer messages.
@@ -1101,7 +1188,7 @@ void MurmurRPCImpl::customEvent(QEvent *evt) {
 void MurmurRPCImpl::run() {
 	MurmurRPC::Wrapper::V1_Init(this, &m_V1Service);
 
-	while (true) {
+	while (m_isRunning) {
 		void *tag;
 		bool ok;
 		if (!m_completionQueue->Next(&tag, &ok)) {
