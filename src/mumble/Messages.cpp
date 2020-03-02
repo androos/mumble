@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -214,11 +214,17 @@ void MainWindow::msgPermissionDenied(const MumbleProto::PermissionDenied &msg) {
 				Channel *c = Channel::get(msg.channel_id());
 				if (! c)
 					return;
-				QString pname = ChanACL::permName(static_cast<ChanACL::Permissions>(msg.permission()));
-				if (pDst == pSelf)
-					g.l->log(Log::PermissionDenied, tr("You were denied %1 privileges in %2.").arg(Log::msgColor(pname, Log::Privilege)).arg(Log::formatChannel(c)));
-				else
-					g.l->log(Log::PermissionDenied, tr("%3 was denied %1 privileges in %2.").arg(Log::msgColor(pname, Log::Privilege)).arg(Log::formatChannel(c)).arg(Log::formatClientUser(pDst, Log::Target)));
+				ChanACL::Permissions permission = static_cast<ChanACL::Permissions>(msg.permission());
+				QString pname = ChanACL::permName(permission);
+
+				if ((permission == ChanACL::Perm::Enter) && c->hasEnterRestrictions.load()) {
+					g.l->log(Log::PermissionDenied, tr("Unable to %1 into %2 - Adding the respective access (password) token might grant you access.").arg(Log::msgColor(pname, Log::Privilege)).arg(Log::formatChannel(c)));
+				} else {
+					if (pDst == pSelf)
+						g.l->log(Log::PermissionDenied, tr("You were denied %1 privileges in %2.").arg(Log::msgColor(pname, Log::Privilege)).arg(Log::formatChannel(c)));
+					else
+						g.l->log(Log::PermissionDenied, tr("%3 was denied %1 privileges in %2.").arg(Log::msgColor(pname, Log::Privilege)).arg(Log::formatChannel(c)).arg(Log::formatClientUser(pDst, Log::Target)));
+				}
 			}
 			break;
 		case MumbleProto::PermissionDenied_DenyType_SuperUser: {
@@ -736,6 +742,24 @@ void MainWindow::msgChannelState(const MumbleProto::ChannelState &msg) {
 	if (msg.has_max_users()) {
 		c->uiMaxUsers = msg.max_users();
 	}
+
+	bool updateUI = false;
+
+	if (msg.has_is_enter_restricted()) {
+		c->hasEnterRestrictions.store(msg.is_enter_restricted());
+		updateUI = true;
+	}
+
+	if (msg.has_can_enter()) {
+		c->localUserCanEnter.store(msg.can_enter());
+		updateUI = true;
+	}
+
+	if (updateUI) {
+		// Passing nullptr to this function will make it do not much except fire a dataChanged event
+		// which leads to the UI being updated (reflecting the changes that just took effect).
+		this->pmModel->toggleChannelFiltered(nullptr);
+	}
 }
 
 void MainWindow::msgChannelRemove(const MumbleProto::ChannelRemove &msg) {
@@ -891,9 +915,16 @@ void MainWindow::removeContextAction(const MumbleProto::ContextActionModify &msg
 	QString action = u8(msg.action());
 
 	QSet<QAction *> qs;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+	qs += QSet<QAction*>(qlServerActions.begin(), qlServerActions.end());
+	qs += QSet<QAction*>(qlChannelActions.begin(), qlChannelActions.end());
+	qs += QSet<QAction*>(qlUserActions.begin(), qlUserActions.end());
+#else
+	// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 	qs += qlServerActions.toSet();
 	qs += qlChannelActions.toSet();
 	qs += qlUserActions.toSet();
+#endif
 
 	foreach(QAction *a, qs) {
 		if (a->data() == action) {

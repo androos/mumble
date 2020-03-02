@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -25,6 +25,7 @@
 #include <QtCore/QObject>
 #include <QtCore/QThread>
 #include <QtCore/QTimer>
+#include <QtCore/QStringList>
 #include <QtNetwork/QHostAddress>
 #include <QtNetwork/QSslCipher>
 #include <QtNetwork/QSslError>
@@ -117,6 +118,7 @@ class ServerHandler : public QThread {
 
 		void requestUserStats(unsigned int uiSession, bool statsOnly);
 		void joinChannel(unsigned int uiSession, unsigned int channel);
+		void joinChannel(unsigned int uiSession, unsigned int channel, const QStringList &temporaryAccessTokens);
 		void createChannel(unsigned int parent_id, const QString &name, const QString &description, unsigned int position, bool temporary, unsigned int maxUsers);
 		void requestBanList();
 		void requestUserList();

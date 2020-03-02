@@ -1,4 +1,4 @@
-# Copyright 2005-2019 The Mumble Developers. All rights reserved.
+# Copyright 2005-2020 The Mumble Developers. All rights reserved.
 # Use of this source code is governed by a BSD-style license
 # that can be found in the LICENSE file at the root of the
 # Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -707,15 +707,15 @@ CONFIG(no-update) {
 }
 
 !CONFIG(no-embed-qt-translations) {
-  QT_TRANSLATIONS_FALLBACK_DIR = qttranslations
-  QT_TRANSLATIONS_FALLBACK_FILES = $$files($$QT_TRANSLATIONS_FALLBACK_DIR/*.ts)
-  for(fn, QT_TRANSLATIONS_FALLBACK_FILES) {
+  QT_TRANSLATIONS_LOCAL_DIR = qttranslations
+  QT_TRANSLATIONS_LOCAL_FILES = $$files($$QT_TRANSLATIONS_LOCAL_DIR/*.ts)
+  for(fn, QT_TRANSLATIONS_LOCAL_FILES) {
     !system($$QMAKE_LRELEASE -silent $$fn) {
       error(Failed to run lrelease for $$fn)
     }
   }
   GENQRC = $$PYTHON ../../scripts/generate-mumble_qt-qrc.py
-  !system($$GENQRC mumble_qt_auto.qrc $$[QT_INSTALL_TRANSLATIONS] $$QT_TRANSLATIONS_FALLBACK_DIR) {
+  !system($$GENQRC mumble_qt_auto.qrc $$[QT_INSTALL_TRANSLATIONS] $$QT_TRANSLATIONS_LOCAL_DIR) {
     error(Failed to run generate-mumble_qt-qrc.py script)
   }
   RESOURCES *= mumble_qt_auto.qrc

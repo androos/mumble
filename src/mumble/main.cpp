@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -397,13 +397,21 @@ int main(int argc, char **argv) {
 	//
 	// See http://doc.qt.io/qt-5/linguist-programmers.html#deploying-translations for more information
 	QTranslator qttranslator;
-	if (qttranslator.load(QLatin1String("qt_") + locale, QLibraryInfo::location(QLibraryInfo::TranslationsPath))) { // Try system qt translations
+	// First we try and see if there is a translation packaged with Mumble that shall overwrite any potentially existing Qt translations.
+	// If not, we try to load the qt-translations installed on the host-machine and if that fails as well,
+	// we try to load translations bundled in Mumble.
+	// Note: Resource starting with :/ are bundled resources specified in a .qrc file
+	if (qttranslator.load(QLatin1String(":/mumble_overwrite_qt_") + locale)) {
+		a.installTranslator(&qttranslator);
+	} else if (qttranslator.load(QLatin1String(":/mumble_overwrite_qtbase_") + locale)) { 
+		a.installTranslator(&qttranslator);
+	} else if (qttranslator.load(QLatin1String("qt_") + locale, QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
 		a.installTranslator(&qttranslator);
 	} else if (qttranslator.load(QLatin1String("qtbase_") + locale, QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
 		a.installTranslator(&qttranslator);
-	} else if (qttranslator.load(QLatin1String(":qt_") + locale)) { // Try bundled translations
+	} else if (qttranslator.load(QLatin1String(":/qt_") + locale)) {
 		a.installTranslator(&qttranslator);
-	} else if (qttranslator.load(QLatin1String(":qtbase_") + locale)) {
+	} else if (qttranslator.load(QLatin1String(":/qtbase_") + locale)) {
 		a.installTranslator(&qttranslator);
 	}
 	
@@ -417,9 +425,6 @@ int main(int argc, char **argv) {
 	cr->run();
 	delete cr;
 #endif
-
-	// Initialize logger
-	g.l = new Log();
 
 	// Initialize database
 	g.db = new Database(QLatin1String("main"));
@@ -446,6 +451,13 @@ int main(int argc, char **argv) {
 	g.mw=new MainWindow(NULL);
 	g.mw->show();
 
+	// Initialize logger
+	// Log::log() needs the MainWindow to already exist. Thus creating the Log instance
+	// before the MainWindow one, does not make sense. if you need logging before this
+	// point, use Log::logOrDefer()
+	g.l = new Log();
+	g.l->processDeferredLogs();
+
 #ifdef Q_OS_WIN
 	// Set mumble_mw_hwnd in os_win.cpp.
 	// Used by APIs in ASIOInput and GlobalShortcut_win that require a HWND.
@@ -467,6 +479,7 @@ int main(int argc, char **argv) {
 	g.p->rescanPlugins();
 
 	Audio::start();
+	g.mw->onChangeMute();
 
 	a.setQuitOnLastWindowClosed(false);
 

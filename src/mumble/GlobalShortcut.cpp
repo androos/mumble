@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -781,8 +781,14 @@ GlobalShortcutEngine::GlobalShortcutEngine(QObject *p) : QThread(p) {
 
 GlobalShortcutEngine::~GlobalShortcutEngine() {
 	QSet<ShortcutKey *> qs;
-	foreach(const QList<ShortcutKey*> &ql, qlShortcutList)
+	foreach(const QList<ShortcutKey*> &ql, qlShortcutList) {
+#if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
+		qs += QSet<ShortcutKey*>(ql.begin(), ql.end());
+#else
+		// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 		qs += ql.toSet();
+#endif
+	}
 
 	foreach(ShortcutKey *sk, qs)
 		delete sk;
@@ -792,8 +798,14 @@ void GlobalShortcutEngine::remap() {
 	bNeedRemap = false;
 
 	QSet<ShortcutKey *> qs;
-	foreach(const QList<ShortcutKey*> &ql, qlShortcutList)
+	foreach(const QList<ShortcutKey*> &ql, qlShortcutList) {
+#if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
+		qs += QSet<ShortcutKey*>(ql.begin(), ql.end());
+#else
+		// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 		qs += ql.toSet();
+#endif
+	}
 
 	foreach(ShortcutKey *sk, qs)
 		delete sk;

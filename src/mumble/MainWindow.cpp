@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -2306,6 +2306,7 @@ void MainWindow::on_qaAudioMute_triggered() {
 		g.sh->setSelfMuteDeafState(g.s.bMute, g.s.bDeaf);
 	}
 
+	onChangeMute();
 	updateTrayIcon();
 }
 
@@ -2342,6 +2343,7 @@ void MainWindow::on_qaAudioDeaf_triggered() {
 		g.sh->setSelfMuteDeafState(g.s.bMute, g.s.bDeaf);
 	}
 
+	onChangeMute();
 	updateTrayIcon();
 }
 
@@ -2790,6 +2792,15 @@ void MainWindow::whisperReleased(QVariant scdata) {
 	updateTarget();
 }
 
+void MainWindow::onChangeMute()
+{
+	if (!g.ai) {
+		return;
+	}
+
+	emit corkAudioInputStream(g.s.bMute && !g.bInAudioWizard);
+}
+
 void MainWindow::onResetAudio()
 {
 	qWarning("MainWindow: Start audio reset");
@@ -2849,6 +2860,7 @@ void MainWindow::serverConnected() {
 
 	if (g.s.bMute || g.s.bDeaf) {
 		g.sh->setSelfMuteDeafState(g.s.bMute, g.s.bDeaf);
+		onChangeMute();
 	}
 
 	// Update QActions and menues
@@ -2910,9 +2922,16 @@ void MainWindow::serverDisconnected(QAbstractSocket::SocketError err, QString re
 	}
 
 	QSet<QAction *> qs;
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+	qs += QSet<QAction*>(qlServerActions.begin(), qlServerActions.end());
+	qs += QSet<QAction*>(qlChannelActions.begin(), qlChannelActions.end());
+	qs += QSet<QAction*>(qlUserActions.begin(), qlUserActions.end());
+#else
+	// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 	qs += qlServerActions.toSet();
 	qs += qlChannelActions.toSet();
 	qs += qlUserActions.toSet();
+#endif
 
 	foreach(QAction *a, qs)
 		delete a;

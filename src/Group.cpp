@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -12,6 +12,8 @@
 
 #include <QtCore/QStack>
 #endif
+
+const Qt::CaseSensitivity Group::accessTokenCaseSensitivity = Qt::CaseInsensitive;
 
 Group::Group(Channel *assoc, const QString &name) {
 	c = assoc;
@@ -141,7 +143,7 @@ bool Group::isMember(Channel *curChan, Channel *aclChan, QString name, ServerUse
 	}
 
 	if (token)
-		m = pl->qslAccessTokens.contains(name, Qt::CaseInsensitive);
+		m = pl->qslAccessTokens.contains(name, Group::accessTokenCaseSensitivity);
 	else if (hash)
 		m = pl->qsHash == name;
 	else if (name == QLatin1String("none"))

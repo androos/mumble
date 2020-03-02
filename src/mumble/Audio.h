@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -10,7 +10,7 @@
 #include <QtCore/QMultiMap>
 #include <QtCore/QMutex>
 #include <QtCore/QString>
-#include <QtCore/QTime>
+#include <QtCore/QElapsedTimer>
 #include <QtCore/QVariant>
 
 #include "ClientUser.h"
@@ -24,8 +24,8 @@ class LoopUser : public ClientUser {
 		Q_DISABLE_COPY(LoopUser)
 	protected:
 		QMutex qmLock;
-		QTime qtTicker;
-		QTime qtLastFetch;
+		QElapsedTimer qetTicker;
+		QElapsedTimer qetLastFetch;
 		QMultiMap<float, QByteArray> qmPackets;
 		LoopUser();
 	public:

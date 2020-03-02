@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -154,7 +154,12 @@ void Connection::socketDisconnected() {
 }
 
 void Connection::messageToNetwork(const ::google::protobuf::Message &msg, unsigned int msgType, QByteArray &cache) {
+#if GOOGLE_PROTOBUF_VERSION >= 3004000
+	int len = msg.ByteSizeLong();
+#else
+	// ByteSize() has been deprecated as of protobuf v3.4
 	int len = msg.ByteSize();
+#endif
 	if (len > 0x7fffff)
 		return;
 	cache.resize(len + 6);

@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -301,6 +301,11 @@ void PulseAudioSystem::eventCallback(pa_mainloop_api *api, pa_defer_event *) {
 			qsInputCache = idev;
 
 			pa_stream_connect_record(pasInput, qPrintable(idev), &buff, PA_STREAM_ADJUST_LATENCY);
+
+			// Ensure stream is initially un-muted
+			pa_stream_cork(pasInput, 0, NULL, NULL);
+
+			connect(g.mw, &MainWindow::corkAudioInputStream, this, &PulseAudioSystem::corkAudioInputStream);
 		}
 	}
 
@@ -368,6 +373,15 @@ void PulseAudioSystem::eventCallback(pa_mainloop_api *api, pa_defer_event *) {
 
 			pa_stream_connect_record(pasSpeaker, qPrintable(edev), &buff, PA_STREAM_ADJUST_LATENCY);
 		}
+	}
+}
+
+void PulseAudioSystem::corkAudioInputStream(const bool cork)
+{
+	if (pasInput) {
+		pa_threaded_mainloop_lock(pam);
+		pa_stream_cork(pasInput, cork, nullptr, nullptr);
+		pa_threaded_mainloop_unlock(pam);
 	}
 }
 

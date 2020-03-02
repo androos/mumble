@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -11,8 +11,13 @@
 #ifdef USE_OPUS
 # include "OpusCodec.h"
 #endif
-#include "Global.h"
 #include "PacketDataStream.h"
+#include "Log.h"
+
+#include <QtCore/QObject>
+
+// We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
+#include "Global.h"
 
 class CodecInit : public DeferInit {
 	public:
@@ -32,7 +37,7 @@ void CodecInit::initialize() {
 		oCodec->report();
 		g.oCodec = oCodec;
 	} else {
-		qWarning("CodecInit: Failed to load Opus, it will not be available for encoding/decoding audio.");
+		Log::logOrDefer(Log::CriticalError, QObject::tr("CodecInit: Failed to load Opus, it will not be available for encoding/decoding audio."));
 		delete oCodec;
 	}
 #endif
@@ -88,8 +93,8 @@ LoopUser::LoopUser() {
 	bLocalIgnore = bLocalMute = bSelfDeaf = false;
 	tsState = Settings::Passive;
 	cChannel = NULL;
-	qtTicker.start();
-	qtLastFetch.start();
+	qetTicker.start();
+	qetLastFetch.start();
 }
 
 void LoopUser::addFrame(const QByteArray &packet) {
@@ -100,9 +105,9 @@ void LoopUser::addFrame(const QByteArray &packet) {
 
 	{
 		QMutexLocker l(&qmLock);
-		bool restart = (qtLastFetch.elapsed() > 100);
+		bool restart = (qetLastFetch.elapsed() > 100);
 
-		double time = qtTicker.elapsed();
+		double time = qetTicker.elapsed();
 
 		double r;
 		if (restart)
@@ -114,7 +119,7 @@ void LoopUser::addFrame(const QByteArray &packet) {
 	}
 
 	// Restart check
-	if (qtLastFetch.elapsed() > 100) {
+	if (qetLastFetch.elapsed() > 100) {
 		AudioOutputPtr ao = g.ao;
 		if (ao) {
 			MessageHandler::UDPMessageType msgType = static_cast<MessageHandler::UDPMessageType>((packet.at(0) >> 5) & 0x7);
@@ -132,7 +137,7 @@ void LoopUser::fetchFrames() {
 		return;
 	}
 
-	double cmp = qtTicker.elapsed();
+	double cmp = qetTicker.elapsed();
 
 	QMultiMap<float, QByteArray>::iterator i = qmPackets.begin();
 
@@ -159,7 +164,7 @@ void LoopUser::fetchFrames() {
 		i = qmPackets.erase(i);
 	}
 
-	qtLastFetch.restart();
+	qetLastFetch.restart();
 }
 
 RecordUser::RecordUser() : LoopUser() {

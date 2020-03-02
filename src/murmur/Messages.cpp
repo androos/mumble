@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -77,6 +77,82 @@
 		sendMessage(uSource, mppd); \
 	}
 
+/// A helper class for managing temporary access tokens.
+/// It will add the tokens in the comstructor and remove them again in the destructor effectively
+/// turning the tokens into a scope-based property.
+class TemporaryAccessTokenHelper {
+	protected:
+		ServerUser *affectedUser;
+		QStringList qslTemporaryTokens;	
+		Server *server;
+
+	public:
+		TemporaryAccessTokenHelper(ServerUser *affectedUser, const QStringList &tokens, Server *server)
+			: affectedUser(affectedUser)
+			 , qslTemporaryTokens(tokens)
+			 , server(server) {
+			// Add the temporary tokens
+			QMutableStringListIterator it(this->qslTemporaryTokens);
+
+			{
+				QMutexLocker qml(&server->qmCache);
+
+				while (it.hasNext()) {
+					QString &token = it.next();
+
+					// If tokens are treated case-insensitively, transform all temp. tokens to lowercase first
+					if (Group::accessTokenCaseSensitivity == Qt::CaseInsensitive) {
+						token = token.toLower();
+					}
+
+					if (!this->affectedUser->qslAccessTokens.contains(token, Group::accessTokenCaseSensitivity)) {
+						// Add token
+						this->affectedUser->qslAccessTokens << token;
+					} else {
+						// It appears, as if the user already has this token set -> it's not a temporary one or a duplicate
+						it.remove();
+					}
+				}
+			}
+
+			if (!this->qslTemporaryTokens.isEmpty()) {
+				// Clear the cache in order for tokens to take effect
+				server->clearACLCache(this->affectedUser);
+			}
+		}
+
+		~TemporaryAccessTokenHelper() {
+			if (!this->qslTemporaryTokens.isEmpty()) {
+				{
+					QMutexLocker qml(&server->qmCache);
+
+					// remove the temporary tokens
+					foreach(const QString &token, this->qslTemporaryTokens) {
+						this->affectedUser->qslAccessTokens.removeOne(token);
+					}
+				}
+
+				// Clear cache to actually get rid of the temporary tokens
+				server->clearACLCache(this->affectedUser);
+			}
+		}
+};
+
+/// Checks whether the given channel has restrictions affecting the ENTER privilege
+///
+/// @param c A pointer to the Channel that should be checked
+/// @return Whether the provided channel has an ACL denying ENTER
+bool isChannelEnterRestricted(Channel *c) {
+	// A channel is enter restricted if there's an ACL denying enter privileges
+	foreach(ChanACL *acl, c->qlACL) {
+		if (acl->pDeny & ChanACL::Enter) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg) {
 	if ((msg.tokens_size() > 0) || (uSource->sState == ServerUser::Authenticated)) {
 		QStringList qsl;
@@ -87,6 +163,16 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 			uSource->qslAccessTokens = qsl;
 		}
 		clearACLCache(uSource);
+
+		// Send back updated enter states of all channels
+		MumbleProto::ChannelState mpcs;
+		foreach(Channel *chan, qhChannels) {
+			mpcs.set_channel_id(chan->iId);
+			mpcs.set_can_enter(ChanACL::hasPermission(uSource, chan, ChanACL::Enter, &acCache));
+			// As no ACLs have changed, we don't need to update the is_access_restricted message field
+
+			sendMessage(uSource, mpcs);
+		}
 	}
 	MSG_SETUP(ServerUser::Connected);
 
@@ -263,6 +349,10 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 
 		mpcs.set_max_users(c->uiMaxUsers);
 
+		// Include info about enter restrictions of this channel
+		mpcs.set_is_enter_restricted(isChannelEnterRestricted(c));
+		mpcs.set_can_enter(ChanACL::hasPermission(uSource, c, ChanACL::Enter, &acCache));
+
 		sendMessage(uSource, mpcs);
 
 		foreach(c, c->qlChannels)
@@ -403,7 +493,12 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 		mpsug.set_positional(qvSuggestPositional.toBool());
 	if (! qvSuggestPushToTalk.isNull())
 		mpsug.set_push_to_talk(qvSuggestPushToTalk.toBool());
+#if GOOGLE_PROTOBUF_VERSION >= 3004000
+	if (mpsug.ByteSizeLong() > 0) {
+#else
+	// ByteSize() has been deprecated as of protobuf v3.4
 	if (mpsug.ByteSize() > 0) {
+#endif
 		sendMessage(uSource, mpsug);
 	}
 
@@ -435,7 +530,12 @@ void Server::msgBanList(ServerUser *uSource, MumbleProto::BanList &msg) {
 		}
 		sendMessage(uSource, msg);
 	} else {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+		previousBans = QSet<Ban>(qlBans.begin(), qlBans.end());
+#else
+		// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 		previousBans = qlBans.toSet();
+#endif
 		qlBans.clear();
 		for (int i=0;i < msg.bans_size(); ++i) {
 			const MumbleProto::BanList_BanEntry &be = msg.bans(i);
@@ -457,7 +557,12 @@ void Server::msgBanList(ServerUser *uSource, MumbleProto::BanList &msg) {
 				qlBans << b;
 			}
 		}
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+		newBans = QSet<Ban>(qlBans.begin(), qlBans.end());
+#else
+		// In Qt 5.14 QList::toSet() has been deprecated as there exists a dedicated constructor of QSet for this now
 		newBans = qlBans.toSet();
+#endif
 		QSet<Ban> removed = previousBans - newBans;
 		QSet<Ban> added = newBans - previousBans;
 		foreach(const Ban &b, removed) {
@@ -501,6 +606,7 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 		First check all permissions involved
 	*/
 	if ((pDstServerUser->iId == 0) && (uSource->iId != 0)) {
+		// Don't allow any action on the SuperUser except initiated directly by the SuperUser himself/herself
 		PERM_DENIED_TYPE(SuperUser);
 		return;
 	}
@@ -516,6 +622,13 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 	if (uSource == pDstServerUser) {
 		RATELIMIT(uSource);
 	}
+	
+	// Handle potential temporary access tokens
+	QStringList temporaryAccessTokens;
+	for	(int i=0; i < msg.temporary_access_tokens_size(); i++) {
+		temporaryAccessTokens << u8(msg.temporary_access_tokens(i));
+	}
+	TemporaryAccessTokenHelper tempTokenHelper(uSource, temporaryAccessTokens, this);
 
 	if (msg.has_channel_id()) {
 		Channel *c = qhChannels.value(msg.channel_id());
@@ -1423,6 +1536,16 @@ void Server::msgACL(ServerUser *uSource, MumbleProto::ACL &msg) {
 
 		updateChannel(c);
 		log(uSource, QString("Updated ACL in channel %1").arg(*c));
+
+		// Send refreshed enter states of this channel to all clients
+		MumbleProto::ChannelState mpcs;
+		mpcs.set_channel_id(c->iId);
+		foreach(ServerUser *user, qhUsers) {
+			mpcs.set_is_enter_restricted(isChannelEnterRestricted(c));
+			mpcs.set_can_enter(ChanACL::hasPermission(user, c, ChanACL::Enter, &acCache));
+
+			sendMessage(uSource, mpcs);
+		}
 	}
 }
 

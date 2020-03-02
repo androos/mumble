@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -237,4 +237,19 @@ QString ChanACL::permName(Perm p) {
 			break;
 	}
 	return QString();
+}
+
+bool ChanACL::isPassword() const {
+	// A password is an ACL that applies to a group of the form '#<something>'
+	// AND grants 'Enter'
+	// AND grants 'Speak', 'Whisper', 'TextMessage', 'LinkChannel' and potentially Traverse but NOTHING else
+	// AND does not deny anything.
+	// Furthermore the ACL must apply directly to the channel and may not be inherited.
+	return this->qsGroup.startsWith(QLatin1Char('#'))
+		&& this->bApplyHere
+		&& !this->bInherited
+		&& (this->pAllow & ChanACL::Enter)
+		&& (this->pAllow == (ChanACL::Enter | ChanACL::Speak | ChanACL::Whisper | ChanACL::TextMessage | ChanACL::LinkChannel) || // Backwards compat with old behaviour that didn't deny traverse
+			this->pAllow == (ChanACL::Enter | ChanACL::Speak | ChanACL::Whisper | ChanACL::TextMessage | ChanACL::LinkChannel | ChanACL::Traverse))
+		&& this->pDeny == ChanACL::None;
 }

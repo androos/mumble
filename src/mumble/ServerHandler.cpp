@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -816,9 +816,20 @@ void ServerHandler::requestUserStats(unsigned int uiSession, bool statsOnly) {
 }
 
 void ServerHandler::joinChannel(unsigned int uiSession, unsigned int channel) {
+	static const QStringList EMPTY;
+
+	joinChannel(uiSession, channel, EMPTY);
+}
+
+void ServerHandler::joinChannel(unsigned int uiSession, unsigned int channel, const QStringList &temporaryAccessTokens) {
 	MumbleProto::UserState mpus;
 	mpus.set_session(uiSession);
 	mpus.set_channel_id(channel);
+
+	foreach(const QString &tmpToken, temporaryAccessTokens) {
+		mpus.add_temporary_access_tokens(tmpToken.toUtf8().constData());
+	}
+
 	sendMessage(mpus);
 }
 

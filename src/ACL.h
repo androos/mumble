@@ -1,4 +1,4 @@
-// Copyright 2005-2019 The Mumble Developers. All rights reserved.
+// Copyright 2005-2020 The Mumble Developers. All rights reserved.
 // Use of this source code is governed by a BSD-style license
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -59,6 +59,10 @@ class ChanACL : public QObject {
 		Permissions pDeny;
 
 		ChanACL(Channel *c);
+
+		/// @returns Whether the given ChanACL represents a password. 
+		bool isPassword() const;
+
 #ifdef MURMUR
 		static bool hasPermission(ServerUser *p, Channel *c, QFlags<Perm> perm, ACLCache *cache);
 		static QFlags<Perm> effectivePermissions(ServerUser *p, Channel *c, ACLCache *cache);

@@ -1,6 +1,6 @@
 #!/bin/bash -ex
 #
-# Copyright 2005-2019 The Mumble Developers. All rights reserved.
+# Copyright 2005-2020 The Mumble Developers. All rights reserved.
 # Use of this source code is governed by a BSD-style license
 # that can be found in the LICENSE file at the root of the
 # Mumble source tree or at <https://www.mumble.info/LICENSE>.
@@ -18,7 +18,8 @@ if [ "${TRAVIS_OS_NAME}" == "linux" ]; then
 			EXTRA_CONFIG="no-pch ${EXTRA_CONFIG}"
 		fi
 		qmake CONFIG+="release tests g15-emulator ${EXTRA_CONFIG}" DEFINES+="MUMBLE_VERSION=${TRAVIS_COMMIT:0:7}" -recursive
-		make -j2 && make check
+		make -j2
+		make check
 	elif [ "${MUMBLE_HOST}" == "aarch64-linux-gnu" ]; then
 		qmake CONFIG+="release tests warnings-as-errors ${EXTRA_CONFIG}" -recursive
 		make -j $(nproc)
