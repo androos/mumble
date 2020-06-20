@@ -185,11 +185,56 @@ QRectF OverlayGroup::boundingRect() const {
 }
 
 Overlay::Overlay() : QObject() {
-	d = NULL;
+	d = nullptr;
 
-	platformInit();
-	forceSettings();
+	m_initialized.store(false);
 
+	qlsServer = nullptr;
+
+	QMetaObject::connectSlotsByName(this);
+}
+
+Overlay::~Overlay() {
+	setActive(false);
+	if (d) {
+		delete d;
+	}
+
+	// Need to be deleted first, since destructor references lingering QLocalSockets
+	foreach(OverlayClient *oc, qlClients) {
+		// As we're the one closing the connection, we do not need to be
+		// notified of disconnects. This is important because on disconnect we
+		// also remove (and 'delete') the overlay client.
+		disconnect(oc->qlsSocket, SIGNAL(disconnected()), this, SLOT(disconnected()));
+		disconnect(oc->qlsSocket, SIGNAL(error(QLocalSocket::LocalSocketError)), this, SLOT(error(QLocalSocket::LocalSocketError)));
+		delete oc;
+	}
+}
+
+void Overlay::initialize() {
+	if (!m_initialized.load()) {
+		platformInit();
+		forceSettings();
+
+		createPipe();
+	
+		m_initialized.store(true);
+	}
+}
+
+void Overlay::setActive(bool act) {
+	if (!act && !m_initialized.load()) {
+		// Disabling when the Overlay hasn't been initialized yet, doesn't make much sense
+		return;
+	}
+
+	// Make sure the Overlay is initialized
+	initialize();
+
+	setActiveInternal(act);
+}
+
+void Overlay::createPipe() {
 	qlsServer = new QLocalServer(this);
 	// Allow anyone to access the pipe in order to communicate with the overlay
 	qlsServer->setSocketOptions(QLocalServer::WorldAccessOption);
@@ -224,31 +269,12 @@ Overlay::Overlay() : QObject() {
 		qWarning() << "Overlay: Listening on" << qlsServer->fullServerName();
 		connect(qlsServer, SIGNAL(newConnection()), this, SLOT(newConnection()));
 	}
-
-	QMetaObject::connectSlotsByName(this);
-}
-
-Overlay::~Overlay() {
-	setActive(false);
-	delete d;
-
-	// Need to be deleted first, since destructor references lingering QLocalSockets
-	foreach(OverlayClient *oc, qlClients)
-	{
-		// As we're the one closing the connection, we do not need to be
-		// notified of disconnects. This is important because on disconnect we
-		// also remove (and 'delete') the overlay client.
-		disconnect(oc->qlsSocket, SIGNAL(disconnected()), this, SLOT(disconnected()));
-		disconnect(oc->qlsSocket, SIGNAL(error(QLocalSocket::LocalSocketError)), this, SLOT(error(QLocalSocket::LocalSocketError)));
-		delete oc;
-	}
 }
 
 void Overlay::newConnection() {
-	while (true) {
+	while (qlsServer && qlsServer->hasPendingConnections()) {
 		QLocalSocket *qls = qlsServer->nextPendingConnection();
-		if (! qls)
-			break;
+
 		OverlayClient *oc = new OverlayClient(qls, this);
 		qlClients << oc;
 

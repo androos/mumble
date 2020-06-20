@@ -43,6 +43,10 @@
 #include "NetworkConfig.h"
 #include "Utils.h"
 
+const QString AudioOutputDialog::name = QLatin1String("AudioOutputWidget");
+const QString AudioInputDialog::name = QLatin1String("AudioInputWidget");
+
+
 static ConfigWidget *AudioInputDialogNew(Settings &st) {
 	return new AudioInputDialog(st);
 }
@@ -60,6 +64,10 @@ void AudioInputDialog::hideEvent(QHideEvent *) {
 
 void AudioInputDialog::showEvent(QShowEvent *) {
 	qtTick->start(20);
+
+	// In case the user has changed the audio output device and is now coming
+	// back.
+	updateEchoEnableState();
 }
 
 AudioInputDialog::AudioInputDialog(Settings &st) : ConfigWidget(st) {
@@ -67,6 +75,25 @@ AudioInputDialog::AudioInputDialog(Settings &st) : ConfigWidget(st) {
 	qtTick->setObjectName(QLatin1String("Tick"));
 
 	setupUi(this);
+
+	qcbSystem->setAccessibleName(tr("Audio system"));
+	qcbDevice->setAccessibleName(tr("Input device"));
+	qcbEcho->setAccessibleName(tr("Echo cancellation mode"));
+	qcbTransmit->setAccessibleName(tr("Transmission mode"));
+	qsDoublePush->setAccessibleName(tr("PTT lock threshold"));
+	qsPTTHold->setAccessibleName(tr("PTT hold threshold"));
+	qsTransmitHold->setAccessibleName(tr("Silence below"));
+	abSpeech->setAccessibleName(tr("Current speech detection chance"));
+	qsTransmitMin->setAccessibleName(tr("Speech above"));
+	qsTransmitMax->setAccessibleName(tr("Speech below"));
+	qsFrames->setAccessibleName(tr("Audio per packet"));
+	qsQuality->setAccessibleName(tr("Quality of compression (peak bandwidth)"));
+	qsNoise->setAccessibleName(tr("Noise suppression"));
+	qsAmp->setAccessibleName(tr("Maximum amplification"));
+	qlePushClickPathOn->setAccessibleName(tr("Transmission started sound"));
+	qlePushClickPathOff->setAccessibleName(tr("Transmission stopped sound"));
+	qsbIdle->setAccessibleName(tr("Initiate idle action after (in minutes)"));
+	qcbIdleAction->setAccessibleName(tr("Idle action"));
 
 	if (AudioInputRegistrar::qmNew) {
 		QList<QString> keys = AudioInputRegistrar::qmNew->keys();
@@ -93,6 +120,10 @@ AudioInputDialog::AudioInputDialog(Settings &st) : ConfigWidget(st) {
 
 QString AudioInputDialog::title() const {
 	return tr("Audio Input");
+}
+
+const QString &AudioInputDialog::getName() const {
+	return AudioInputDialog::name;
 }
 
 QIcon AudioInputDialog::icon() const {
@@ -375,11 +406,38 @@ void AudioInputDialog::on_qcbSystem_currentIndexChanged(int) {
 			++idx;
 		}
 
-		qcbEcho->setEnabled(air->canEcho(s.qsAudioOutput));
+		updateEchoEnableState();
+
 		qcbExclusive->setEnabled(air->canExclusive());
 	}
 
 	qcbDevice->setEnabled(ql.count() > 1);
+}
+
+void AudioInputDialog::updateEchoEnableState() {
+	AudioInputRegistrar *air = AudioInputRegistrar::qmNew->value(qcbSystem->currentText());
+
+	AudioOutputDialog *outputWidget = static_cast<AudioOutputDialog *>(ConfigDialog::getConfigWidget(AudioOutputDialog::name));
+	QString outputInterface;
+	if (outputWidget) {
+		outputInterface = outputWidget->getCurrentlySelectedOutputInterfaceName();
+	} else {
+		// Fallback for when the outputWIdget is not (yet) available -> use the value from the current settings
+		outputInterface = s.qsAudioOutput;
+	}
+
+	if (air->canEcho(outputInterface)) {
+		qcbEcho->setEnabled(true);
+		qcbEcho->setToolTip(QObject::tr("If enabled this tries to cancel out echo from the audio stream.\n"
+			"Mixed echo cancellation mixes all speaker outputs in one mono stream and passes that stream to "
+			"the echo canceller, while multichannel echo cancellation passes all audio channels to the echo canceller directly.\n"
+			"Multichannel echo cancellation requires more CPU, so you should try mixed first"));
+	} else {
+		qcbEcho->setCurrentIndex(0);
+		qcbEcho->setEnabled(false);
+		qcbEcho->setToolTip(QObject::tr("Echo cancellation is not supported for the interface "
+					"combination \"%1\" (in) and \"%2\" (out).").arg(air->name).arg(outputInterface));
+	}
 }
 
 void AudioInputDialog::on_Tick_timeout() {
@@ -411,8 +469,32 @@ void AudioInputDialog::on_qcbIdleAction_currentIndexChanged(int v) {
 	qcbUndoIdleAction->setEnabled(enabled);
 }
 
+void AudioOutputDialog::enablePulseAudioAttenuationOptionsFor(const QString &outputName) {
+	if (outputName == QLatin1String("PulseAudio")) {
+		qcbOnlyAttenuateSameOutput->show();
+		qcbAttenuateLoopbacks->show();
+	} else {
+		qcbOnlyAttenuateSameOutput->hide();
+		qcbAttenuateLoopbacks->hide();
+	}
+}
+
 AudioOutputDialog::AudioOutputDialog(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
+
+	qcbSystem->setAccessibleName(tr("Output system"));
+	qcbDevice->setAccessibleName(tr("Output device"));
+	qsJitter->setAccessibleName(tr("Default jitter buffer"));
+	qsVolume->setAccessibleName(tr("Volume of incoming speech"));
+	qsDelay->setAccessibleName(tr("Output delay"));
+	qsOtherVolume->setAccessibleName(tr("Attenuation of other applications during speech"));
+	qsMinDistance->setAccessibleName(tr("Minimum distance"));
+	qsMaxDistance->setAccessibleName(tr("Maximum distance"));
+	qsMaxDistVolume->setAccessibleName(tr("Minimum volume"));
+	qsBloom->setAccessibleName(tr("Bloom"));
+	qsPacketDelay->setAccessibleName(tr("Delay variance"));
+	qsPacketLoss->setAccessibleName(tr("Packet loss"));
+	qcbLoopback->setAccessibleName(tr("Loopback"));
 
 	if (AudioOutputRegistrar::qmNew) {
 		QList<QString> keys = AudioOutputRegistrar::qmNew->keys();
@@ -433,8 +515,20 @@ QString AudioOutputDialog::title() const {
 	return tr("Audio Output");
 }
 
+const QString &AudioOutputDialog::getName() const {
+	return AudioOutputDialog::name;
+}
+
 QIcon AudioOutputDialog::icon() const {
 	return QIcon(QLatin1String("skin:config_audio_output.png"));
+}
+
+QString AudioOutputDialog::getCurrentlySelectedOutputInterfaceName() const {
+	if (qcbSystem) {
+		return qcbSystem->currentText();
+	}
+
+	return QString();
 }
 
 void AudioOutputDialog::load(const Settings &r) {
@@ -458,11 +552,13 @@ void AudioOutputDialog::load(const Settings &r) {
 	loadCheckBox(qcbAttenuateUsersOnPrioritySpeak, r.bAttenuateUsersOnPrioritySpeak);
 	loadCheckBox(qcbOnlyAttenuateSameOutput, r.bOnlyAttenuateSameOutput);
 	loadCheckBox(qcbAttenuateLoopbacks, r.bAttenuateLoopbacks);
-	if (AudioOutputRegistrar::current == QLatin1String("PulseAudio")) {
-		qgbAdvancedAttenuation->setVisible(true);
-	} else {
-		qgbAdvancedAttenuation->setVisible(false);
-	}
+
+	const bool attenuationActive = r.bAttenuateOthers || r.bAttenuateOthersOnTalk;
+	qcbOnlyAttenuateSameOutput->setEnabled(attenuationActive);
+	qcbAttenuateLoopbacks->setEnabled(attenuationActive && r.bOnlyAttenuateSameOutput);
+
+	enablePulseAudioAttenuationOptionsFor(AudioOutputRegistrar::current);
+
 	loadSlider(qsJitter, r.iJitterBufferSize);
 	loadComboBox(qcbLoopback, r.lmLoopMode);
 	loadSlider(qsPacketDelay, static_cast<int>(r.dMaxPacketDelay));
@@ -530,11 +626,9 @@ void AudioOutputDialog::on_qcbSystem_currentIndexChanged(int) {
 		bool canmute = aor->canMuteOthers();
 		qsOtherVolume->setEnabled(canmute);
 		qcbAttenuateOthersOnTalk->setEnabled(canmute);
-		if (aor->name == QLatin1String("PulseAudio")) {
-			qgbAdvancedAttenuation->setVisible(true);
-		} else {
-			qgbAdvancedAttenuation->setVisible(false);
-		}
+
+		enablePulseAudioAttenuationOptionsFor(aor->name);
+
 		qcbAttenuateOthers->setEnabled(canmute);
 		qlOtherVolume->setEnabled(canmute);
 
@@ -610,22 +704,22 @@ void AudioOutputDialog::on_qsBloom_valueChanged(int v) {
 	qlBloom->setText(tr("%1 %").arg(v+100));
 }
 
-void AudioOutputDialog::on_qcbPositional_stateChanged(int v) {
-	qgbVolume->setEnabled(v);
-}
-
 void AudioOutputDialog::on_qcbAttenuateOthersOnTalk_clicked(bool checked) {
 	bool b = qcbAttenuateOthers->isChecked() || checked;
 	qsOtherVolume->setEnabled(b);
 	qlOtherVolume->setEnabled(b);
-	qgbAdvancedAttenuation->setEnabled(b);
+
+	qcbOnlyAttenuateSameOutput->setEnabled(b);
+	qcbAttenuateLoopbacks->setEnabled(b && qcbOnlyAttenuateSameOutput->isChecked());
 }
 
 void AudioOutputDialog::on_qcbAttenuateOthers_clicked(bool checked) {
 	bool b = qcbAttenuateOthersOnTalk->isChecked() || checked;
 	qsOtherVolume->setEnabled(b);
 	qlOtherVolume->setEnabled(b);
-	qgbAdvancedAttenuation->setEnabled(b);
+
+	qcbOnlyAttenuateSameOutput->setEnabled(b);
+	qcbAttenuateLoopbacks->setEnabled(b && qcbOnlyAttenuateSameOutput->isChecked());
 }
 
 void AudioOutputDialog::on_qcbOnlyAttenuateSameOutput_clicked(bool checked) {

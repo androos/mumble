@@ -35,6 +35,7 @@ struct Shortcut {
 };
 
 struct ShortcutTarget {
+	bool bCurrentSelection;
 	bool bUsers;
 	QStringList qlUsers;
 	QList<unsigned int> qlSessions;
@@ -154,10 +155,6 @@ struct Settings {
 	AudioTransmit atTransmit;
 	quint64 uiDoublePush;
 	quint64 pttHold;
-
-	/// Removed. This was previously used to configure whether the Mumble
-	/// ConfigDialog should show advanced options or not.
-	bool bExpert;
 
 	bool bTxAudioCue;
 	static const QString cqsDefaultPushClickOn;
@@ -279,6 +276,22 @@ struct Settings {
 	enum MessageLog { LogNone = 0x00, LogConsole = 0x01, LogTTS = 0x02, LogBalloon = 0x04, LogSoundfile = 0x08, LogHighlight = 0x10 };
 	int iMaxLogBlocks;
 	bool bLog24HourClock;
+	int iChatMessageMargins;
+
+	bool bShowTalkingUI;
+	bool bTalkingUI_LocalUserStaysVisible;
+	bool bTalkingUI_AbbreviateChannelNames;
+	bool bTalkingUI_AbbreviateCurrentChannel;
+	/// relative font size in %
+	int iTalkingUI_RelativeFontSize;
+	int iTalkingUI_SilentUserLifeTime;
+	int iTalkingUI_ChannelHierarchyDepth;
+	int iTalkingUI_MaxChannelNameLength;
+	int iTalkingUI_PrefixCharCount;
+	int iTalkingUI_PostfixCharCount;
+	QString qsTalkingUI_ChannelSeparator;
+	QString qsTalkingUI_AbbreviationReplacement;
+
 	QMap<int, QString> qmMessageSounds;
 	QMap<int, quint32> qmMessages;
 

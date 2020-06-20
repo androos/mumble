@@ -61,14 +61,21 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		QSystemTrayIcon *qstiIcon;
 		QMenu *qmUser;
 		QMenu *qmChannel;
+		QMenu *qmListener;
 		QMenu *qmDeveloper;
 		QMenu *qmTray;
 		QIcon qiIcon, qiIconMutePushToMute, qiIconMuteSelf, qiIconMuteServer, qiIconDeafSelf, qiIconDeafServer, qiIconMuteSuppressed;
 		QIcon qiTalkingOn, qiTalkingWhisper, qiTalkingShout, qiTalkingOff;
 		QMap<unsigned int, UserLocalVolumeDialog *> qmUserVolTracker;
 
+		/// "Action" for when there are no actions available
+		QAction *qaEmpty;
+
 		GlobalShortcut *gsPushTalk, *gsResetAudio, *gsMuteSelf, *gsDeafSelf;
-		GlobalShortcut *gsUnlink, *gsPushMute, *gsJoinChannel, *gsToggleOverlay;
+		GlobalShortcut *gsUnlink, *gsPushMute, *gsJoinChannel;
+#ifdef USE_OVERLAY
+		GlobalShortcut *gsToggleOverlay;
+#endif
 		GlobalShortcut *gsMinimal, *gsVolumeUp, *gsVolumeDown, *gsWhisper, *gsLinkChannel;
 		GlobalShortcut *gsCycleTransmitMode, *gsTransmitModePushToTalk, *gsTransmitModeContinuous, *gsTransmitModeVAD;
 		GlobalShortcut *gsSendTextMessage, *gsSendClipboardTextMessage;
@@ -106,7 +113,6 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void updateTrayIcon();
 		void updateUserModel();
 		void focusNextMainWidget();
-		void updateTransmitModeComboBox();
 		QPair<QByteArray, QImage> openImageFile();
 		
 		void updateChatBar();
@@ -126,9 +132,20 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		QList<QAction *> qlUserActions;
 
 		QHash<ShortcutTarget, int> qmCurrentTargets;
+		/// A map that contains information about the currently active
+		/// shout/whisper targets. The mapping is between a List of
+		/// ShortcutTargets that are all triggered together and the
+		/// target ID for this specific combination of ShortcutTargets.
+		/// The target ID is what the server uses to identify this specific
+		/// set of ShortcutTargets.
 		QHash<QList<ShortcutTarget>, int> qmTargets;
+		/// This is a map between all target IDs the client will ever use
+		/// and a helper-number (see iTargetCounter).
 		QMap<int, int> qmTargetUse;
 		Channel *mapChannel(int idx) const;
+		/// This is a pure helper number whose job is to always be increased
+		/// if a new VoiceTarget is needed. It will be used as the helper
+		/// number in qmTargetUse.
 		int iTargetCounter;
 		QMap<unsigned int, UserInformation *> qmUserInformations;
 
@@ -176,7 +193,9 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void on_qaSelfComment_triggered();
 		void on_qaSelfRegister_triggered();
 		void qcbTransmitMode_activated(int index);
+		void updateTransmitModeComboBox();
 		void qmUser_aboutToShow();
+		void qmListener_aboutToShow();
 		void on_qaUserCommentReset_triggered();
 		void on_qaUserTextureReset_triggered();
 		void on_qaUserCommentView_triggered();
@@ -187,6 +206,7 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void on_qaSelfPrioritySpeaker_triggered();
 		void on_qaUserPrioritySpeaker_triggered();
 		void on_qaUserLocalIgnore_triggered();
+		void on_qaUserLocalIgnoreTTS_triggered();
 		void on_qaUserLocalMute_triggered();
 		void on_qaUserLocalVolume_triggered();
 		void on_qaUserTextMessage_triggered();
@@ -197,6 +217,8 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void on_qaUserFriendUpdate_triggered();
 		void qmChannel_aboutToShow();
 		void on_qaChannelJoin_triggered();
+		void on_qaUserJoin_triggered();
+		void on_qaChannelListen_triggered();
 		void on_qaChannelAdd_triggered();
 		void on_qaChannelRemove_triggered();
 		void on_qaChannelACL_triggered();
@@ -206,6 +228,7 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void on_qaChannelSendMessage_triggered();
 		void on_qaChannelFilter_triggered();
 		void on_qaChannelCopyURL_triggered();
+		void on_qaListenerLocalVolume_triggered();
 		void on_qaAudioReset_triggered();
 		void on_qaAudioMute_triggered();
 		void on_qaAudioDeaf_triggered();
@@ -250,6 +273,7 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void on_gsSendClipboardTextMessage_triggered(bool, QVariant);
 		void on_Reconnect_timeout();
 		void on_Icon_activated(QSystemTrayIcon::ActivationReason);
+		void on_qaTalkingUIToggle_triggered();
 		void voiceRecorderDialog_finished(int);
 		void qtvUserCurrentChanged(const QModelIndex &, const QModelIndex &);
 		void serverConnected();
@@ -266,6 +290,7 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		void destroyUserInformation();
 		void trayAboutToShow();
 		void sendChatbarMessage(QString msg);
+		void sendChatbarText(QString msg);
 		void pttReleased();
 		void whisperReleased(QVariant scdata);
 		void onResetAudio();
@@ -292,6 +317,9 @@ class MainWindow : public QMainWindow, public MessageHandler, public Ui::MainWin
 		/// the input stream. If false, the audio backend MUST immediately
 		/// un-cork/resume the stream.
 		void corkAudioInputStream(const bool cork);
+		/// Signal emitted when the server and the client have finished
+		/// synchronizing (after a new connection).
+		void serverSynchronized();
 	public:
 		MainWindow(QWidget *parent);
 		~MainWindow() Q_DECL_OVERRIDE;

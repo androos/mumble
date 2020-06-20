@@ -18,6 +18,8 @@
 #include "Version.h"
 #include "HTMLFilter.h"
 #include "HostAddress.h"
+#include "ChannelListener.h"
+#include "SpeechFlags.h"
 
 #ifdef USE_BONJOUR
 # include "BonjourServer.h"
@@ -29,6 +31,7 @@
 #include <QtCore/QCoreApplication>
 #include <QtCore/QXmlStreamAttributes>
 #include <QtCore/QtEndian>
+#include <QtCore/QSet>
 #include <QtNetwork/QHostInfo>
 #include <QtNetwork/QSslConfiguration>
 
@@ -416,7 +419,12 @@ void Server::readParams() {
 	QString qsHost = getConf("host", QString()).toString();
 	if (! qsHost.isEmpty()) {
 		qlBind.clear();
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+		foreach(const QString &host, qsHost.split(QRegExp(QLatin1String("\\s+")), Qt::SkipEmptyParts)) {
+#else
+		// Qt 5.14 introduced the Qt::SplitBehavior flags deprecating the QString fields
 		foreach(const QString &host, qsHost.split(QRegExp(QLatin1String("\\s+")), QString::SkipEmptyParts)) {
+#endif
 			QHostAddress qhaddr;
 			if (qhaddr.setAddress(qsHost)) {
 				qlBind << qhaddr;
@@ -917,12 +925,12 @@ void Server::run() {
 bool Server::checkDecrypt(ServerUser *u, const char *encrypt, char *plain, unsigned int len) {
 	QMutexLocker l(&u->qmCrypt);
 
-	if (u->csCrypt.isValid() && u->csCrypt.decrypt(reinterpret_cast<const unsigned char *>(encrypt), reinterpret_cast<unsigned char *>(plain), len))
+	if (u->csCrypt->isValid() && u->csCrypt->decrypt(reinterpret_cast<const unsigned char *>(encrypt), reinterpret_cast<unsigned char *>(plain), len))
 		return true;
 
-	if (u->csCrypt.tLastGood.elapsed() > 5000000ULL) {
-		if (u->csCrypt.tLastRequest.elapsed() > 5000000ULL) {
-			u->csCrypt.tLastRequest.restart();
+	if (u->csCrypt->tLastGood.elapsed() > 5000000ULL) {
+		if (u->csCrypt->tLastRequest.elapsed() > 5000000ULL) {
+			u->csCrypt->tLastRequest.restart();
 			emit reqSync(u->uiSession);
 		}
 	}
@@ -945,12 +953,13 @@ void Server::sendMessage(ServerUser *u, const char *data, int len, QByteArray &c
 		{
 			QMutexLocker wl(&u->qmCrypt);
 
-			if (!u->csCrypt.isValid()) {
+			if (!u->csCrypt->isValid()) {
 				return;
 			}
 
-			u->csCrypt.encrypt(reinterpret_cast<const unsigned char *>(data), reinterpret_cast<unsigned char *>(buffer),
-							   len);
+			if (!u->csCrypt->encrypt(reinterpret_cast<const unsigned char *>(data), reinterpret_cast<unsigned char *>(buffer), len)) {
+				return;
+			}
 		}
 #ifdef Q_OS_WIN
 		DWORD dwFlow = 0;
@@ -1021,6 +1030,11 @@ void Server::sendMessage(ServerUser *u, const char *data, int len, QByteArray &c
 		}
 
 void Server::processMsg(ServerUser *u, const char *data, int len) {
+	// Note that in this function we never have to aquire a read-lock on qrwlVoiceThread
+	// as all places that call this function will hold that lock at the point of calling
+	// this function.
+	// This function is currently called from Server::msgUDPTunnel, Server::run and
+	// Server::message
 	if (u->sState != ServerUser::Authenticated || u->bMute || u->bSuppress || u->bSelfMute)
 		return;
 
@@ -1071,19 +1085,38 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 
 	len = pds.size() + 1;
 
+	/// A set of users that'll receive the audio buffer because they are listening
+	/// to a channel that received that audio.
+	QSet<ServerUser *> listeningUsers;
+
 	if (target == 0x1f) { // Server loopback
-		buffer[0] = static_cast<char>(type | 0);
+		buffer[0] = static_cast<char>(type | SpeechFlags::Normal);
 		sendMessage(u, buffer, len, qba);
 		return;
 	} else if (target == 0) { // Normal speech
 		Channel *c = u->cChannel;
 
-		buffer[0] = static_cast<char>(type | 0);
+		buffer[0] = static_cast<char>(type | SpeechFlags::Normal);
+
+		// Send audio to all users that are listening to the channel
+		foreach(unsigned int currentSession, ChannelListener::getListenersForChannel(c)) {
+			ServerUser *pDst = static_cast<ServerUser *>(qhUsers.value(currentSession));
+			if (pDst) {
+				listeningUsers << pDst;
+			}
+		}
+
+		// Send audio to all users in the same channel
 		foreach(User *p, c->qlUsers) {
 			ServerUser *pDst = static_cast<ServerUser *>(p);
+
+			// As we send the audio to this particular user here, we want to make sure to not send it again due to a listener proxy
+			listeningUsers -= pDst;
+
 			SENDTO;
 		}
 
+		// Send audio to all linked channels the user has speak-permission
 		if (! c->qhLinks.isEmpty()) {
 			QSet<Channel *> chans = c->allLinks();
 			chans.remove(c);
@@ -1092,21 +1125,42 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 
 			foreach(Channel *l, chans) {
 				if (ChanACL::hasPermission(u, l, ChanACL::Speak, &acCache)) {
+					// Send the audio stream to all users that are listening to the linked channel but are not
+					// in the original channel the audio is coming from nor are they listening to the orignal
+					// channel (in these cases they have received the audio already).
+					foreach(unsigned int currentSession, ChannelListener::getListenersForChannel(l)) {
+						ServerUser *pDst = static_cast<ServerUser *>(qhUsers.value(currentSession));
+						if (pDst && pDst->cChannel != c && !ChannelListener::isListening(pDst, c)) {
+							listeningUsers << pDst;
+						}
+					}
+
+					// Send audio to users in the linked channel but only if they
+					// haven't received the audio already (because they are listening
+					// to the original channel).
 					foreach(User *p, l->qlUsers) {
-						ServerUser *pDst = static_cast<ServerUser *>(p);
-						SENDTO;
+						if (!ChannelListener::isListening(p->uiSession, c->iId)) {
+							ServerUser *pDst = static_cast<ServerUser *>(p);
+
+							// As we send the audio to this particular user here, we want to make sure to not send it again due to a listener proxy
+							listeningUsers -= pDst;
+
+							SENDTO;
+						}
 					}
 				}
 			}
 		}
-	} else if (u->qmTargets.contains(target)) { // Whisper
+	} else if (u->qmTargets.contains(target)) { // Whisper/Shout
 		QSet<ServerUser *> channel;
 		QSet<ServerUser *> direct;
+		QSet<ServerUser *> listener;
 
 		if (u->qmTargetCache.contains(target)) {
-			const ServerUser::TargetCache &cache = u->qmTargetCache.value(target);
-			channel = cache.first;
-			direct = cache.second;
+			const WhisperTargetCache &cache = u->qmTargetCache.value(target);
+			channel = cache.channelTargets;
+			direct = cache.directTargets;
+			listener = cache.listeningTargets;
 		} else {
 			const WhisperTarget &wt = u->qmTargets.value(target);
 			if (! wt.qlChannels.isEmpty()) {
@@ -1123,6 +1177,14 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 							if (ChanACL::hasPermission(u, wc, ChanACL::Whisper, &acCache)) {
 								foreach(User *p, wc->qlUsers) {
 									channel.insert(static_cast<ServerUser *>(p));
+								}
+
+								foreach(unsigned int currentSession, ChannelListener::getListenersForChannel(wc)) {
+									ServerUser *pDst = static_cast<ServerUser *>(qhUsers.value(currentSession));
+
+									if (pDst) {
+										listener << pDst;
+									}
 								}
 							}
 						} else {
@@ -1143,11 +1205,23 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 											channel.insert(su);
 										}
 									}
+
+									foreach(unsigned int currentSession, ChannelListener::getListenersForChannel(tc)) {
+										ServerUser *pDst = static_cast<ServerUser *>(qhUsers.value(currentSession));
+
+										if (pDst) {
+											listener << pDst;
+										}
+									}
 								}
 							}
 						}
 					}
 				}
+
+				// If a user receives the audio through this shout anyways, we won't send it through the
+				// listening channel again (and thus sending the audio twice)
+				listener -= channel;
 			}
 
 			{
@@ -1165,14 +1239,15 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 			qrwlVoiceThread.lockForWrite();
 
 			if (qhUsers.contains(uiSession))
-				u->qmTargetCache.insert(target, ServerUser::TargetCache(channel, direct));
+				u->qmTargetCache.insert(target, { channel, direct, listener });
 			qrwlVoiceThread.unlock();
 			qrwlVoiceThread.lockForRead();
 			if (! qhUsers.contains(uiSession))
 				return;
 		}
 		if (! channel.isEmpty()) {
-			buffer[0] = static_cast<char>(type | 1);
+			// These users receive the audio because someone is shouting to their channel
+			buffer[0] = static_cast<char>(type | SpeechFlags::Shout);
 			foreach(ServerUser *pDst, channel) {
 				SENDTO;
 			}
@@ -1182,11 +1257,20 @@ void Server::processMsg(ServerUser *u, const char *data, int len) {
 			}
 		}
 		if (! direct.isEmpty()) {
-			buffer[0] = static_cast<char>(type | 2);
+			buffer[0] = static_cast<char>(type | SpeechFlags::Whisper);
 			foreach(ServerUser *pDst, direct) {
 				SENDTO;
 			}
 		}
+
+		// Add the listening users to the set of current listeners
+		listeningUsers += listener;
+	}
+
+	// Send the audio to all listening users
+	buffer[0] = static_cast<char>(type | SpeechFlags::Listen); 
+	foreach(ServerUser *pDst, listeningUsers) {
+		SENDTO;
 	}
 }
 
@@ -1245,6 +1329,25 @@ void Server::newClient() {
 		sock->setPrivateKey(qskKey);
 		sock->setLocalCertificate(qscCert);
 
+		QSslConfiguration config = sock->sslConfiguration();
+#if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
+		// Qt 5.15 introduced QSslConfiguration::addCaCertificate(s) that should be preferred over the functions in QSslSocket
+
+		// Treat the leaf certificate as a root.
+		// This shouldn't strictly be necessary,
+		// and is a left-over from early on.
+		// Perhaps it is necessary for self-signed
+		// certs?
+		config.addCaCertificate(qscCert);
+
+		// Add CA certificates specified via
+		// murmur.ini's sslCA option.
+		config.addCaCertificates(Meta::mp.qlCA);
+
+		// Add intermediate CAs found in the PEM
+		// bundle used for this server's certificate.
+		config.addCaCertificates(qlIntermediates);
+#else
 		// Treat the leaf certificate as a root.
 		// This shouldn't strictly be necessary,
 		// and is a left-over from early on.
@@ -1259,13 +1362,13 @@ void Server::newClient() {
 		// Add intermediate CAs found in the PEM
 		// bundle used for this server's certificate.
 		sock->addCaCertificates(qlIntermediates);
-
-		QSslConfiguration cfg = sock->sslConfiguration();
-		cfg.setCiphers(Meta::mp.qlCiphers);
-#if defined(USE_QSSLDIFFIEHELLMANPARAMETERS)
-		cfg.setDiffieHellmanParameters(qsdhpDHParams);
 #endif
-		sock->setSslConfiguration(cfg);
+
+		config.setCiphers(Meta::mp.qlCiphers);
+#if defined(USE_QSSLDIFFIEHELLMANPARAMETERS)
+		config.setDiffieHellmanParameters(qsdhpDHParams);
+#endif
+		sock->setSslConfiguration(config);
 
 		if (qqIds.isEmpty()) {
 			log(QString("Session ID pool (%1) empty, rejecting connection").arg(iMaxUsers));
@@ -1304,6 +1407,8 @@ void Server::newClient() {
 		sock->setProtocol(QSsl::TlsV1_0);
 #endif
 		sock->startServerEncryption();
+
+		meta->successfulConnectionFrom(adr);
 	}
 }
 
@@ -1422,6 +1527,19 @@ void Server::sslError(const QList<QSslError> &errors) {
 }
 
 void Server::connectionClosed(QAbstractSocket::SocketError err, const QString &reason) {
+	if (reason.contains(QLatin1String("140E0197"))) {
+		// A severe bug was introduced in qt/qtbase@93a803a6de27d9eb57931c431b5f3d074914f693.
+		// q_SSL_shutdown() causes Qt to emit "error()" from unrelated QSslSocket(s), in addition to the correct one.
+		// The issue causes this function to disconnect random authenticated clients.
+		//
+		// The workaround consists in ignoring a specific OpenSSL error:
+		// "Error while reading: error:140E0197:SSL routines:SSL_shutdown:shutdown while in init [20]"
+		//
+		// Definitely not ideal, but it fixes a critical vulnerability.
+		qWarning("Ignored OpenSSL error 140E0197 for %p", sender());
+		return;
+	}
+
 	Connection *c = qobject_cast<Connection *>(sender());
 	if (! c)
 		return;
@@ -1434,6 +1552,22 @@ void Server::connectionClosed(QAbstractSocket::SocketError err, const QString &r
 	log(u, QString("Connection closed: %1 [%2]").arg(reason).arg(err));
 
 	if (u->sState == ServerUser::Authenticated) {
+		if (ChannelListener::isListeningToAny(u)) {
+			// Send nessage to all other clients that this particular user won't be listening
+			// to any channel anymore
+			MumbleProto::UserState mpus;
+			mpus.set_session(u->uiSession);
+
+			foreach(int channelID, ChannelListener::getListenedChannelsForUser(u)) {
+				mpus.add_listening_channel_remove(channelID);
+
+				// Also remove the client from the list on the server
+				ChannelListener::removeListener(u->uiSession, channelID);
+			}
+
+			sendExcept(u, mpus);
+		}
+
 		MumbleProto::UserRemove mpur;
 		mpur.set_session(u->uiSession);
 		sendExcept(u, mpur);
@@ -1643,6 +1777,17 @@ void Server::removeChannel(Channel *chan, Channel *dest) {
 		emit userStateChanged(p);
 	}
 
+	foreach(unsigned int userSession, ChannelListener::getListenersForChannel(chan)) {
+		ChannelListener::removeListener(userSession, chan->iId);
+
+		// Notify that all clients that have been listening to this channel, will do so no more
+		MumbleProto::UserState mpus;
+		mpus.set_session(userSession);
+		mpus.add_listening_channel_remove(chan->iId);
+
+		sendAll(mpus);
+	}
+
 	MumbleProto::ChannelRemove mpcr;
 	mpcr.set_channel_id(chan->iId);
 	sendAll(mpcr);
@@ -1836,11 +1981,16 @@ void Server::clearACLCache(User *p) {
 		}
 	}
 
-	{
-		QWriteLocker lock(&qrwlVoiceThread);
+	// A change in ACLs means that the user might be able to whisper
+	// to users it didn't have permission to do before (or vice versa)
+	clearWhisperTargetCache();
+}
 
-		foreach(ServerUser *u, qhUsers)
-			u->qmTargetCache.clear();
+void Server::clearWhisperTargetCache() {
+	QWriteLocker lock(&qrwlVoiceThread);
+
+	foreach(ServerUser *u, qhUsers) {
+		u->qmTargetCache.clear();
 	}
 }
 

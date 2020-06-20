@@ -34,6 +34,8 @@ public:
 	int iMaxBandwidth;
 	int iMaxUsers;
 	int iMaxUsersPerChannel;
+	int iMaxListenersPerChannel;
+	int iMaxListenerProxiesPerUser;
 	int iDefaultChan;
 	bool bRememberChan;
 	int iMaxTextMessageLength;
@@ -57,6 +59,7 @@ public:
 	int iBanTries;
 	int iBanTimeframe;
 	int iBanTime;
+	bool bBanSuccessful;
 
 	QString qsDatabase;
 	int iSQLiteWAL;
@@ -137,6 +140,11 @@ public:
 	QVariant qvSuggestPositional;
 	QVariant qvSuggestPushToTalk;
 
+	/// A flag indicating whether changes in groups should be logged
+	bool bLogGroupChanges;
+	/// A flag indicating whether changes in ACLs should be logged
+	bool bLogACLChanges;
+
 	/// qsAbsSettingsFilePath is the absolute path to
 	/// the murmur.ini used by this Meta instance.
 	QString qsAbsSettingsFilePath;
@@ -185,6 +193,10 @@ class Meta : public QObject {
 		void bootAll();
 		bool boot(int);
 		bool banCheck(const QHostAddress &);
+
+		/// Called whenever we get a successful connection from a client.
+		/// Used to reset autoban tracking for the address.
+		void successfulConnectionFrom(const QHostAddress &);
 		void kill(int);
 		void killAll();
 		void getOSInfo();

@@ -56,7 +56,13 @@ void MumbleDBus::getCurrentUrl(const QDBusMessage &msg) {
 		path.prepend(c->qsName);
 		c = c->cParent;
 	}
-	u.setPath(path.join(QLatin1String("/")));
+	QString fullpath = path.join(QLatin1String("/"));
+	// Make sure fullpath starts with a slash for non-empty paths. Setting
+	// a path without a leading slash clears the whole QUrl.
+	if (!fullpath.isEmpty()) {
+	    fullpath.prepend(QLatin1String("/"));
+	}
+	u.setPath(fullpath);
 	QDBusConnection::sessionBus().send(msg.createReply(QString::fromLatin1(u.toEncoded())));
 }
 
@@ -76,6 +82,28 @@ void MumbleDBus::focus() {
 	g.mw->show();
 	g.mw->raise();
 	g.mw->activateWindow();
+}
+
+void MumbleDBus::setTransmitMode(unsigned int mode, const QDBusMessage &msg) {
+	switch (mode) {
+		case 0:
+			g.s.atTransmit = Settings::Continuous;
+			break;
+		case 1:
+			g.s.atTransmit = Settings::VAD;
+			break;
+		case 2:
+			g.s.atTransmit = Settings::PushToTalk;
+			break;
+		default:
+			QDBusConnection::sessionBus().send(msg.createErrorReply(QLatin1String("net.sourceforge.mumble.Error.transmitMode"), QLatin1String("Invalid transmit mode")));
+			return;
+	}
+	QMetaObject::invokeMethod(g.mw, "updateTransmitModeComboBox", Qt::QueuedConnection);
+}
+
+unsigned int MumbleDBus::getTransmitMode() {
+	return g.s.atTransmit;
 }
 
 void MumbleDBus::setSelfMuted(bool mute) {

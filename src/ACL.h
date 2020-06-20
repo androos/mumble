@@ -31,15 +31,19 @@ class ChanACL : public QObject {
 			Whisper = 0x100,
 			TextMessage = 0x200,
 			MakeTempChannel = 0x400,
+			Listen = 0x800,
 
 			// Root channel only
 			Kick = 0x10000,
 			Ban = 0x20000,
 			Register = 0x40000,
 			SelfRegister = 0x80000,
+			ResetUserContent = 0x100000,
 
 			Cached = 0x8000000,
-			All = 0xf07ff
+			All = Write + Traverse + Enter + Speak + MuteDeafen + Move
+				+ MakeChannel + LinkChannel + Whisper + TextMessage + MakeTempChannel + Listen
+				+ Kick + Ban + Register + SelfRegister + ResetUserContent
 		};
 
 		Q_DECLARE_FLAGS(Permissions, Perm)
@@ -62,6 +66,10 @@ class ChanACL : public QObject {
 
 		/// @returns Whether the given ChanACL represents a password. 
 		bool isPassword() const;
+
+		/// @ereturns A string representation of this ChanACL summarizing what permissions are granted or denied.
+		/// 	If this ACL neither grants nor denies any permissions, an empty String is returned.
+		explicit operator QString() const;
 
 #ifdef MURMUR
 		static bool hasPermission(ServerUser *p, Channel *c, QFlags<Perm> perm, ACLCache *cache);

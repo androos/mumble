@@ -9,7 +9,7 @@ include(../qmake/rcc.pri)
 include(../qmake/pkgconfig.pri)
 
 VERSION		= 1.4.0
-DIST		= mumble.pri Message.h PacketDataStream.h CryptState.h Timer.h Version.h OSInfo.h SSL.h
+DIST		= mumble.pri Message.h PacketDataStream.h crypto/CryptState.h crypto/CryptStateOCB2.h Timer.h Version.h OSInfo.h SSL.h
 CONFIG		+= qt thread debug_and_release warn_on
 DEFINES		*= MUMBLE_VERSION_STRING=$$VERSION
 INCLUDEPATH	+= $$PWD . ../mumble_proto
@@ -18,7 +18,9 @@ VPATH		+= $$PWD
 HEADERS *= \
   ACL.h \
   Channel.h \
-  CryptState.h \
+  ChannelListener.h \
+  crypto/CryptState.h \
+  crypto/CryptStateOCB2.h \
   Connection.h \
   Group.h \
   HTMLFilter.h \
@@ -33,8 +35,8 @@ HEADERS *= \
   licenses.h \
   License.h \
   LogEmitter.h \
-  CryptographicHash.h \
-  CryptographicRandom.h \
+  crypto/CryptographicHash.h \
+  crypto/CryptographicRandom.h \
   PasswordGenerator.h \
   ByteSwap.h \
   HostAddress.cpp \
@@ -47,25 +49,27 @@ HEADERS *= \
   SelfSignedCertificate.h \
   SSLLocks.h \
   FFDHETable.h \
-  FFDHE.h
+  FFDHE.h \
+  SpeechFlags.h
 
 SOURCES *= \
   ACL.cpp \
   Group.cpp \
   Channel.cpp \
+  ChannelListener.cpp \
   Connection.cpp \
   HTMLFilter.cpp \
   User.cpp \
   Timer.cpp \
-  CryptState.cpp \
+  crypto/CryptStateOCB2.cpp \
   OSInfo.cpp \
   SSL.cpp \
   Version.cpp \
   SSLCipherInfo.cpp \
   License.cpp \
   LogEmitter.cpp \
-  CryptographicHash.cpp \
-  CryptographicRandom.cpp \
+  crypto/CryptographicHash.cpp \
+  crypto/CryptographicRandom.cpp \
   PasswordGenerator.cpp \
   HostAddress.cpp \
   Ban.cpp \

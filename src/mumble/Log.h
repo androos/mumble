@@ -24,9 +24,12 @@ class LogConfig : public ConfigWidget, public Ui::LogConfig {
 		Q_OBJECT
 		Q_DISABLE_COPY(LogConfig)
 	public:
+		/// The unique name of this ConfigWidget
+		static const QString name;
 		enum Column { ColMessage, ColConsole, ColNotification, ColHighlight, ColTTS, ColStaticSound, ColStaticSoundPath };
 		LogConfig(Settings &st);
 		QString title() const Q_DECL_OVERRIDE;
+		const QString &getName() const Q_DECL_OVERRIDE;
 		QIcon icon() const Q_DECL_OVERRIDE;
 	public slots:
 		void accept() const Q_DECL_OVERRIDE;
@@ -49,10 +52,10 @@ class Log : public QObject {
 		Q_OBJECT
 		Q_DISABLE_COPY(Log)
 	public:
-		enum MsgType { DebugInfo, CriticalError, Warning, Information, ServerConnected, ServerDisconnected, UserJoin, UserLeave, Recording, YouKicked, UserKicked, SelfMute, OtherSelfMute, YouMuted, YouMutedOther, OtherMutedOther, ChannelJoin, ChannelLeave, PermissionDenied, TextMessage, SelfUnmute, SelfDeaf, SelfUndeaf, UserRenamed, SelfChannelJoin, SelfChannelJoinOther, ChannelJoinConnect, ChannelLeaveDisconnect, PrivateTextMessage };
+		enum MsgType { DebugInfo, CriticalError, Warning, Information, ServerConnected, ServerDisconnected, UserJoin, UserLeave, Recording, YouKicked, UserKicked, SelfMute, OtherSelfMute, YouMuted, YouMutedOther, OtherMutedOther, ChannelJoin, ChannelLeave, PermissionDenied, TextMessage, SelfUnmute, SelfDeaf, SelfUndeaf, UserRenamed, SelfChannelJoin, SelfChannelJoinOther, ChannelJoinConnect, ChannelLeaveDisconnect, PrivateTextMessage, ChannelListeningAdd, ChannelListeningRemove };
 		enum LogColorType { Time, Server, Privilege, Source, Target };
 		static const MsgType firstMsgType = DebugInfo;
-		static const MsgType lastMsgType = PrivateTextMessage;
+		static const MsgType lastMsgType = ChannelListeningRemove;
 		
 		// Display order in settingsscreen, allows to insert new events without breaking config-compatibility with older versions.
 		static const MsgType msgOrder[];
@@ -87,9 +90,9 @@ class Log : public QObject {
 		static QString formatChannel(::Channel *c);
 		/// Either defers the LogMessage or defers it, depending on whether Global::l is created already
 		/// (if it is, it is used to directly log the msg)
-		static void logOrDefer(Log::MsgType mt, const QString &console, const QString &terse=QString(), bool ownMessage = false, const QString &overrideTTS=QString());
+		static void logOrDefer(Log::MsgType mt, const QString &console, const QString &terse=QString(), bool ownMessage = false, const QString &overrideTTS=QString(), bool ignoreTTS = false);
 	public slots:
-		void log(MsgType mt, const QString &console, const QString &terse=QString(), bool ownMessage = false, const QString &overrideTTS=QString());
+		void log(MsgType mt, const QString &console, const QString &terse=QString(), bool ownMessage = false, const QString &overrideTTS=QString(), bool ignoreTTS = false);
 		/// Logs LogMessages that have been deferred so far
 		void processDeferredLogs();
 };
@@ -101,9 +104,10 @@ class LogMessage {
 		QString terse;
 		bool ownMessage;
 		QString overrideTTS;
+		bool ignoreTTS;
 
 		LogMessage() = default;
-		LogMessage(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS);
+		LogMessage(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS, bool ignoreTTS);
 };
 
 class LogDocument : public QTextDocument {

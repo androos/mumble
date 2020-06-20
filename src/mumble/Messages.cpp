@@ -20,7 +20,9 @@
 #include "GlobalShortcut.h"
 #include "Log.h"
 #include "MainWindow.h"
-#include "Overlay.h"
+#ifdef USE_OVERLAY
+	#include "Overlay.h"
+#endif
 #include "Plugins.h"
 #include "ServerHandler.h"
 #include "User.h"
@@ -29,8 +31,10 @@
 #include "UserModel.h"
 #include "VersionCheck.h"
 #include "ViewCert.h"
-#include "CryptState.h"
+#include "crypto/CryptState.h"
 #include "Utils.h"
+#include "ChannelListener.h"
+#include "TalkingUI.h"
 
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
@@ -134,9 +138,12 @@ void MainWindow::msgServerSync(const MumbleProto::ServerSync &msg) {
 	pmModel->ensureSelfVisible();
 	pmModel->recheckLinks();
 
+	// Reset the mechanism for using and recycling target IDs for setting up
+	// VoiceTargets
 	qmTargetUse.clear();
 	qmTargets.clear();
-	for (int i=1;i<6;++i) {
+	const int uniqueTargetIDCount = 5;
+	for (int i = 1; i < uniqueTargetIDCount + 1; ++i) {
 		qmTargetUse.insert(i, i);
 	}
 	iTargetCounter = 100;
@@ -176,6 +183,23 @@ void MainWindow::msgServerSync(const MumbleProto::ServerSync &msg) {
 	on_qmConfig_aboutToShow();
 
 	updateTrayIcon();
+
+	// Set-up all ChannelListeners and their volume adjustments as before for this server
+	// Use the timer to execute the code in the main event loop as we have to access
+	// the database.
+	QTimer::singleShot(0, []() {
+		g.sh->startListeningToChannels(g.db->getChannelListeners(g.sh->qbaDigest));
+		
+		QHash<int, float> volumeMap = g.db->getChannelListenerLocalVolumeAdjustments(g.sh->qbaDigest);
+
+		QHashIterator<int, float> it(volumeMap);
+		while(it.hasNext()) {
+			it.next();
+			ChannelListener::setListenerLocalVolumeAdjustment(it.key(), it.value());
+		}
+	});
+
+	emit serverSynchronized();
 }
 
 /// This message is being received when the server informs this client about server configuration details. This contains
@@ -289,6 +313,14 @@ void MainWindow::msgPermissionDenied(const MumbleProto::PermissionDenied &msg) {
 				g.l->log(Log::PermissionDenied, tr("Channel count limit reached. Need to delete channels before creating new ones."));
 			}
 			break;
+		case MumbleProto::PermissionDenied_DenyType_ChannelListenerLimit: {
+				g.l->log(Log::PermissionDenied, tr("No more listeners allowed in this channel."));
+			}
+			break;
+		case MumbleProto::PermissionDenied_DenyType_UserListenerLimit: {
+				g.l->log(Log::PermissionDenied, tr("You are not allowed to listen to more channels than you currently are."));
+			}
+			break;
 		default: {
 				if (msg.has_reason())
 					g.l->log(Log::PermissionDenied, tr("Denied: %1.").arg(u8(msg.reason()).toHtmlEscaped()));
@@ -331,6 +363,8 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 
 		pDst = pmModel->addUser(msg.session(), u8(msg.name()));
 
+		connect(pDst, &ClientUser::talkingStateChanged, g.talkingUI, &TalkingUI::on_talkingStateChanged);
+
 		if (channel) {
 			pmModel->moveUser(pDst, channel);
 		}
@@ -356,6 +390,11 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 		Channel *oldChannel = pDst->cChannel;
 		if (channel != oldChannel) {
 			pmModel->moveUser(pDst, channel);
+
+			if (g.talkingUI) {
+				// Pass the pointer as QObject in order to avoid having to register ClientUser as a QMetaType
+				QMetaObject::invokeMethod(g.talkingUI, "on_channelChanged", Qt::QueuedConnection, Q_ARG(QObject *, pDst));
+			}
 
 			if (pSelf) {
 				if (pDst == pSelf) {
@@ -398,6 +437,50 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 		}
 	}
 
+	// Handle channel listening
+	for (int i = 0; i < msg.listening_channel_add_size(); i++) {
+		Channel *c = Channel::get(msg.listening_channel_add(i));
+
+		if (!c) {
+			qWarning("msgUserState(): Invalid channel ID encountered");
+			continue;
+		}
+
+		pmModel->addChannelListener(pDst, c);
+
+		QString logMsg;
+		if (pDst == pSelf) {
+			logMsg = tr("You started listening to %1").arg(Log::formatChannel(c));
+		} else if (pSelf && pSelf->cChannel == c) {
+			logMsg = tr("%1 started listening to your channel").arg(Log::formatClientUser(pDst, Log::Target));
+		}
+
+		if (!logMsg.isEmpty()) {
+			g.l->log(Log::ChannelListeningAdd, logMsg);
+		}
+	}
+	for (int i = 0; i < msg.listening_channel_remove_size(); i++) {
+		Channel *c = Channel::get(msg.listening_channel_remove(i));
+
+		if (!c) {
+			qWarning("msgUserState(): Invalid channel ID encountered");
+			continue;
+		}
+
+		pmModel->removeChannelListener(pDst, c);
+
+		QString logMsg;
+		if (pDst == pSelf) {
+			logMsg = tr("You stopped listening to %1").arg(Log::formatChannel(c));
+		} else if (pSelf && pSelf->cChannel == c) {
+			logMsg = tr("%1 stopped listening to your channel").arg(Log::formatClientUser(pDst, Log::Target));
+		}
+
+		if (!logMsg.isEmpty()) {
+			g.l->log(Log::ChannelListeningRemove, logMsg);
+		}
+	}
+
 	if (msg.has_name()) {
 		QString oldName = pDst->qsName;
 		QString newName = u8(msg.name());
@@ -421,6 +504,8 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 			pDst->setLocalMute(true);
 		if (g.db->isLocalIgnored(pDst->qsHash))
 			pDst->setLocalIgnore(true);
+		if (g.db->isLocalIgnoredTTS(pDst->qsHash))
+			pDst->setLocalIgnoreTTS(true);
 		pDst->fLocalVolume = g.db->getUserLocalVolume(pDst->qsHash);
 	}
 
@@ -600,7 +685,9 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 	if (msg.has_texture_hash()) {
 		pDst->qbaTextureHash = blob(msg.texture_hash());
 		pDst->qbaTexture = QByteArray();
+#ifdef USE_OVERLAY
 		g.o->verifyTexture(pDst);
+#endif
 	}
 	if (msg.has_texture()) {
 		pDst->qbaTexture = blob(msg.texture());
@@ -610,7 +697,9 @@ void MainWindow::msgUserState(const MumbleProto::UserState &msg) {
 			pDst->qbaTextureHash = sha1(pDst->qbaTexture);
 			g.db->setBlob(pDst->qbaTextureHash, pDst->qbaTexture);
 		}
+#ifdef USE_OVERLAY
 		g.o->verifyTexture(pDst);
+#endif
 	}
 	if (msg.has_comment_hash())
 		pmModel->setCommentHash(pDst, blob(msg.comment_hash()));
@@ -651,6 +740,8 @@ void MainWindow::msgUserRemove(const MumbleProto::UserRemove &msg) {
 	}
 	if (pDst != pSelf)
 		pmModel->removeUser(pDst);
+
+	QMetaObject::invokeMethod(g.talkingUI, "on_clientDisconnected", Qt::QueuedConnection, Q_ARG(unsigned int, pDst->uiSession));
 }
 
 /// This message is being received when the server informs the local client about channel properties (either during connection/login
@@ -820,7 +911,8 @@ void MainWindow::msgTextMessage(const MumbleProto::TextMessage &msg) {
 	         tr("%2%1: %3").arg(name).arg(target).arg(u8(msg.message())),
 	         tr("Message from %1").arg(plainName),
 	         false,
-	         overrideTTS.isNull() ? QString() : overrideTTS);
+	         overrideTTS.isNull() ? QString() : overrideTTS,
+	         pSrc ? pSrc->bLocalIgnoreTTS : false);
 }
 
 /// This message is being received when the server informs the client about the access control list (ACL) for
@@ -860,17 +952,20 @@ void MainWindow::msgCryptSetup(const MumbleProto::CryptSetup &msg) {
 		const std::string &key = msg.key();
 		const std::string &client_nonce = msg.client_nonce();
 		const std::string &server_nonce = msg.server_nonce();
-		if (key.size() == AES_KEY_SIZE_BYTES && client_nonce.size() == AES_BLOCK_SIZE && server_nonce.size() == AES_BLOCK_SIZE)
-			c->csCrypt.setKey(reinterpret_cast<const unsigned char *>(key.data()), reinterpret_cast<const unsigned char *>(client_nonce.data()), reinterpret_cast<const unsigned char *>(server_nonce.data()));
+		if (!c->csCrypt->setKey(key, client_nonce, server_nonce)){
+			qWarning("Messages: Cipher resync failed: Invalid key/nonce from the server!");
+		}
 	} else if (msg.has_server_nonce()) {
 		const std::string &server_nonce = msg.server_nonce();
 		if (server_nonce.size() == AES_BLOCK_SIZE) {
-			c->csCrypt.uiResync++;
-			memcpy(c->csCrypt.decrypt_iv, server_nonce.data(), AES_BLOCK_SIZE);
+			c->csCrypt->uiResync++;
+			if(!c->csCrypt->setDecryptIV(server_nonce)){
+				qWarning("Messages: Cipher resync failed: Invalid nonce from the server!");
+			}
 		}
 	} else {
 		MumbleProto::CryptSetup mpcs;
-		mpcs.set_client_nonce(std::string(reinterpret_cast<const char *>(c->csCrypt.encrypt_iv), AES_BLOCK_SIZE));
+		mpcs.set_client_nonce(c->csCrypt->getEncryptIV());
 		g.sh->sendMessage(mpcs);
 	}
 }
@@ -1059,7 +1154,11 @@ void MainWindow::msgUserStats(const MumbleProto::UserStats &msg) {
 	if (ui) {
 		ui->update(msg);
 	} else {
+#ifdef USE_OVERLAY
 		ui = new UserInformation(msg, g.ocIntercept ? g.mw : NULL);
+#else
+		ui = new UserInformation(msg, NULL);
+#endif
 		ui->setAttribute(Qt::WA_DeleteOnClose, true);
 		connect(ui, SIGNAL(destroyed()), this, SLOT(destroyUserInformation()));
 

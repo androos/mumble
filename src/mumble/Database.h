@@ -37,6 +37,9 @@ class Database : public QObject {
 		bool isLocalIgnored(const QString &hash);
 		void setLocalIgnored(const QString &hash, bool ignored);
 
+		bool isLocalIgnoredTTS(const QString &hash);
+		void setLocalIgnoredTTS(const QString &hash, bool ignoredTTS);
+
 		bool isLocalMuted(const QString &hash);
 		void setLocalMuted(const QString &hash, bool muted);
 
@@ -71,6 +74,12 @@ class Database : public QObject {
 
 		bool getUdp(const QByteArray &digest);
 		void setUdp(const QByteArray &digest, bool udp);
+
+		QList<int> getChannelListeners(const QByteArray &digest);
+		void setChannelListeners(const QByteArray &digest, const QSet<int> &channelIDs);
+
+		QHash<int, float> getChannelListenerLocalVolumeAdjustments(const QByteArray &digest);
+		void setChannelListenerLocalVolumeAdjustments(const QByteArray &digest, const QHash<int, float> &volumeMap);
 };
 
 #endif

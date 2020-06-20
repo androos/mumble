@@ -32,6 +32,7 @@ class CELTCodec;
 class OpusCodec;
 class LogEmitter;
 class DeveloperConsole;
+class TalkingUI;
 
 class QNetworkAccessManager;
 
@@ -52,22 +53,31 @@ public:
 	Log *l;
 	Plugins *p;
 	QSettings *qs;
+#ifdef USE_OVERLAY
 	Overlay *o;
+#endif
 	LCD *lcd;
 	BonjourClient *bc;
 	QNetworkAccessManager *nam;
 	QSharedPointer<LogEmitter> le;
 	DeveloperConsole *c;
+	TalkingUI *talkingUI;
 	int iPushToTalk;
 	Timer tDoublePush;
 	quint64 uiDoublePush;
+	/// Holds the current VoiceTarget ID to send audio to
 	int iTarget;
+	/// Holds the value of iTarget before its last change until the current
+	/// audio-stream ends (and it has a value > 0). See the comment in
+	/// AudioInput::flushCheck for further details on this.
 	int iPrevTarget;
 	bool bPushToMute;
 	bool bCenterPosition;
 	bool bPosTest;
 	bool bInAudioWizard;
+#ifdef USE_OVERLAY
 	OverlayClient *ocIntercept;
+#endif
 	int iAudioPathTime;
 	/// A unique ID for the current user. It is being assigned by the server right
 	/// after connecting to it. An ID of 0 indicates that the user currently isn't
@@ -91,6 +101,9 @@ public:
 	unsigned int uiImageLength;
 	unsigned int uiMaxUsers;
 	bool bQuit;
+	QString windowTitlePostfix;
+	bool bDebugDumpInput;
+	bool bDebugPrintQueue;
 
 	bool bHappyEaster;
 	static const char ccHappyEaster[];

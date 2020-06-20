@@ -12,10 +12,13 @@
 #include "Log.h"
 #include "MainWindow.h"
 #include "Message.h"
-#include "Overlay.h"
+#ifdef USE_OVERLAY
+	#include "Overlay.h"
+#endif
 #include "ServerHandler.h"
 #include "Usage.h"
 #include "User.h"
+#include "ChannelListener.h"
 
 #include <QtCore/QMimeData>
 #include <QtCore/QStack>
@@ -29,22 +32,33 @@
 
 QHash <Channel *, ModelItem *> ModelItem::c_qhChannels;
 QHash <ClientUser *, ModelItem *> ModelItem::c_qhUsers;
+QHash <ClientUser *, QList<ModelItem *>> ModelItem::s_userProxies;
 bool ModelItem::bUsersTop = false;
 
 ModelItem::ModelItem(Channel *c) {
 	this->cChan = c;
 	this->pUser = NULL;
+	this->isListener = false;
 	bCommentSeen = true;
 	c_qhChannels.insert(c, this);
 	parent = c_qhChannels.value(c->cParent);
 	iUsers = 0;
 }
 
-ModelItem::ModelItem(ClientUser *p) {
+ModelItem::ModelItem(ClientUser *p, bool isListener) {
 	this->cChan = NULL;
 	this->pUser = p;
+	this->isListener = isListener;
 	bCommentSeen = true;
-	c_qhUsers.insert(p, this);
+	if (isListener) {
+		// The way operator[] works for a QHash is that it'll insert a default-constructed
+		// object first, before returning a reference to it, in case there is no entry for
+		// the provided key yet. Thus we never have to worry about explicitly adding an empty
+		// list for a new user before accessing it.
+		s_userProxies[p] << this;
+	} else {
+		c_qhUsers.insert(p, this);
+	}
 	parent = c_qhChannels.value(p->cChannel);
 	iUsers = 0;
 }
@@ -55,9 +69,15 @@ ModelItem::ModelItem(ModelItem *i) {
 	this->pUser = i->pUser;
 	this->parent = i->parent;
 	this->bCommentSeen = i->bCommentSeen;
+	this->isListener = i->isListener;
 
-	if (pUser)
-		c_qhUsers.insert(pUser, this);
+	if (pUser) {
+		if (isListener) {
+			s_userProxies[pUser] << this;
+		} else {
+			c_qhUsers.insert(pUser, this);
+		}
+	}
 	else if (cChan)
 		c_qhChannels.insert(cChan, this);
 
@@ -69,8 +89,14 @@ ModelItem::~ModelItem() {
 
 	if (cChan && c_qhChannels.value(cChan) == this)
 		c_qhChannels.remove(cChan);
-	if (pUser && c_qhUsers.value(pUser) == this)
-		c_qhUsers.remove(pUser);
+	if (pUser) {
+		if (isListener) {
+			s_userProxies[pUser].removeAll(this);
+		} else {
+			if (c_qhUsers.value(pUser) == this)
+				c_qhUsers.remove(pUser);
+		}
+	}
 }
 
 void ModelItem::wipe() {
@@ -112,9 +138,9 @@ int ModelItem::rowOf(Channel *c) const {
 	return -1;
 }
 
-int ModelItem::rowOf(ClientUser *p) const {
+int ModelItem::rowOf(ClientUser *p, const bool isListener) const {
 	for (int i=0;i<qlChildren.count();i++)
-		if (qlChildren.at(i)->pUser == p)
+		if (qlChildren.at(i)->isListener == isListener && qlChildren.at(i)->pUser == p)
 			return i;
 	return -1;
 }
@@ -125,7 +151,7 @@ int ModelItem::rowOfSelf() const {
 		return 0;
 
 	if (pUser)
-		return parent->rowOf(pUser);
+		return parent->rowOf(pUser, isListener);
 	else
 		return parent->rowOf(cChan);
 }
@@ -153,32 +179,45 @@ int ModelItem::insertIndex(Channel *c) const {
 	return qlpc.indexOf(c) + (bUsersTop ? ocount : 0);
 }
 
-int ModelItem::insertIndex(ClientUser *p) const {
+int ModelItem::insertIndex(ClientUser *p, bool isListener) const {
 	QList<ClientUser*> qlclientuser;
 	ModelItem *item;
 
 	int ocount = 0;
+	int listenerCount = 0;
 
 	foreach(item, qlChildren) {
 		if (item->pUser) {
-			if (item->pUser != p)
-				qlclientuser << item->pUser;
-		} else
+			if (item->pUser != p) {
+				// Make sure listeners and non-listeners are all grouped together and not mixed
+				if ((isListener && item->isListener) || (!isListener && !item->isListener)) {
+					qlclientuser << item->pUser;
+				}
+			}
+
+			if (item->isListener) {
+				listenerCount++;
+			}
+		} else {
 			ocount++;
+		}
 	}
 
 	qlclientuser << p;
 	std::sort(qlclientuser.begin(), qlclientuser.end(), ClientUser::lessThan);
 
-	return qlclientuser.indexOf(p) + (bUsersTop ? 0 : ocount);
+	// Make sure that the a user is always added to other users either all above or all below
+	// sub-channels) and also make sure that listeners are grouped together and directly above
+	// normal users.
+	return qlclientuser.indexOf(p) + (bUsersTop ? 0 : ocount) + (isListener ? 0 : listenerCount);
 }
 
 QString ModelItem::hash() const {
 	if (pUser) {
 		if (! pUser->qsHash.isEmpty())
-			return pUser->qsHash;
+			return pUser->qsHash + (isListener ? QLatin1String("l"): QString());
 		else
-			return QLatin1String(sha1(pUser->qsName).toHex());
+			return QLatin1String(sha1(pUser->qsName + (isListener ? QLatin1String("l") : QString())).toHex());
 	} else {
 		QCryptographicHash chash(QCryptographicHash::Sha1);
 
@@ -220,6 +259,7 @@ UserModel::UserModel(QObject *p) : QAbstractItemModel(p) {
 	qiFilter=QIcon(QLatin1String("skin:filter.svg"));
 	qiLock_locked=QIcon(QLatin1String("skin:lock_locked.svg"));
 	qiLock_unlocked=QIcon(QLatin1String("skin:lock_unlocked.svg"));
+	qiEar=QIcon(QLatin1String("skin:ear.svg"));
 
 	ModelItem::bUsersTop = g.s.bUserTop;
 
@@ -335,6 +375,17 @@ QString UserModel::stringIndex(const QModelIndex &idx) const {
 		return QString::fromLatin1("C:%1 [%2,%3]").arg(item->cChan->qsName).arg(idx.row()).arg(idx.column());
 }
 
+QModelIndex UserModel::getSelectedIndex() const {
+	QTreeView *v = g.mw->qtvUsers;
+	if (v) {
+		QItemSelectionModel *sel = v->selectionModel();
+
+		return sel->currentIndex();
+	}
+
+	return QModelIndex();
+}
+
 QVariant UserModel::data(const QModelIndex &idx, int role) const {
 	if (!idx.isValid())
 		return QVariant();
@@ -359,16 +410,29 @@ QVariant UserModel::data(const QModelIndex &idx, int role) const {
 		switch (role) {
 			case Qt::DecorationRole:
 				if (idx.column() == 0) {
-					switch (p->tsState) {
-						case Settings::Talking:
-							return qiTalkingOn;
-						case Settings::Whispering:
-							return qiTalkingWhisper;
-						case Settings::Shouting:
-							return qiTalkingShout;
-						case Settings::Passive:
-						default:
+					if (item->isListener) {
+						return qiEar;
+					} else {
+						// Select the talking-state symbol to display
+						if (p == pSelf && p->bSelfMute) {
+							// This is a workaround for a bug that can lead to the user having muted him/herself but
+							// the talking icon is stuck at qiTalkingOn for some reason.
+							// Until someone figures out how to fix the root of the problem, we'll have this workaround
+							// to cure the symptoms of the bug.
 							return qiTalkingOff;
+						}
+
+						switch (p->tsState) {
+							case Settings::Talking:
+								return qiTalkingOn;
+							case Settings::Whispering:
+								return qiTalkingWhisper;
+							case Settings::Shouting:
+								return qiTalkingShout;
+							case Settings::Passive:
+							default:
+								return qiTalkingOff;
+						}
 					}
 				}
 				break;
@@ -376,6 +440,12 @@ QVariant UserModel::data(const QModelIndex &idx, int role) const {
 				if ((idx.column() == 0) && (p->uiSession == g.uiSession)) {
 					QFont f = g.mw->font();
 					f.setBold(! f.bold());
+					f.setItalic(item->isListener);
+					return f;
+				}
+				if (item->isListener) {
+					QFont f = g.mw->font();
+					f.setItalic(true);
 					return f;
 				}
 				break;
@@ -386,34 +456,37 @@ QVariant UserModel::data(const QModelIndex &idx, int role) const {
 					else
 						return p->qsName;
 				}
-				if (! p->qbaCommentHash.isEmpty())
+				// Most of the following icons are for non-listeners (as listeners are merely proxies) only
+				// but in order to not change the order of the icons, the condition is added to each case
+				// individually instead of checking it up front.
+				if (! p->qbaCommentHash.isEmpty() && !item->isListener)
 					l << (item->bCommentSeen ? qiCommentSeen : qiComment);
-				if (p->bPrioritySpeaker)
+				if (p->bPrioritySpeaker && !item->isListener)
 					l << qiPrioritySpeaker;
 				if (p->bRecording)
 					l << qiRecording;
 				// ClientUser doesn't contain a push-to-mute
 				// state because it isn't sent to the server.
 				// We can show the icon only for the local user.
-				if (p == pSelf && g.bPushToMute)
+				if (p == pSelf && g.bPushToMute && !item->isListener)
 					l << qiMutedPushToMute;
-				if (p->bMute)
+				if (p->bMute || item->isListener)
 					l << qiMutedServer;
-				if (p->bSuppress)
+				if (p->bSuppress && !item->isListener)
 					l << qiMutedSuppressed;
-				if (p->bSelfMute)
+				if (p->bSelfMute && !item->isListener)
 					l << qiMutedSelf;
-				if (p->bLocalMute)
+				if (p->bLocalMute && !item->isListener)
 					l << qiMutedLocal;
-				if (p->bLocalIgnore)
+				if (p->bLocalIgnore && !item->isListener)
 					l << qiIgnoredLocal;
 				if (p->bDeaf)
 					l << qiDeafenedServer;
 				if (p->bSelfDeaf)
 					l << qiDeafenedSelf;
-				if (p->iId >= 0)
+				if (p->iId >= 0 && !item->isListener)
 					l << qiAuthenticated;
-				if (! p->qsFriendName.isEmpty())
+				if (! p->qsFriendName.isEmpty() && !item->isListener)
 					l << qiFriend;
 				return l;
 			default:
@@ -516,7 +589,9 @@ QVariant UserModel::otherRoles(const QModelIndex &idx, int role) const {
 										mprb.add_session_texture(p->uiSession);
 										g.sh->sendMessage(mprb);
 									} else {
+#ifdef USE_OVERLAY
 										g.o->verifyTexture(p);
+#endif
 									}
 								}
 								if (! p->qbaTexture.isEmpty()) {
@@ -705,88 +780,123 @@ void UserModel::recursiveClone(const ModelItem *old, ModelItem *item, QModelInde
 		recursiveClone(old->qlChildren.at(i), item->qlChildren.at(i), from, to);
 }
 
-ModelItem *UserModel::moveItem(ModelItem *oldparent, ModelItem *newparent, ModelItem *item) {
+ModelItem *UserModel::moveItem(ModelItem *oldparent, ModelItem *newparent, ModelItem *oldItem) {
 	// Here's the idea. We insert the item, update persistent indexes, THEN remove it.
 
-	int oldrow = oldparent->qlChildren.indexOf(item);
+	// Get the current position of the item under its parent (aka its "row")
+	int oldrow = oldparent->qlChildren.indexOf(oldItem);
+
+	// Get the row of the item at its new position. This depends on whether we're moving a
+	// channel or a user.
 	int newrow = -1;
-
-	if (item->cChan)
-		newrow = newparent->insertIndex(item->cChan);
-	else
-		newrow = newparent->insertIndex(item->pUser);
-
-	if ((oldparent == newparent) && (newrow == oldrow)) {
-		emit dataChanged(index(item),index(item));
-		return item;
+	if (oldItem->cChan) {
+		newrow = newparent->insertIndex(oldItem->cChan);
+	} else {
+		newrow = newparent->insertIndex(oldItem->pUser);
 	}
 
-	// Shallow clone
-	ModelItem *t = new ModelItem(item);
+	if ((oldparent == newparent) && (newrow == oldrow)) {
+		// This is a no-op. We still claim that the data has changed in order
+		// to trigger potential event handlers.
+		emit dataChanged(index(oldItem),index(oldItem));
+		return oldItem;
+	}
+
+	// Shallow clone. newItem is the new ModelItem that will be added to newparent
+	ModelItem *newItem = new ModelItem(oldItem);
 
 	// Store the index if it's "active".
 	// The selection is stored as "from"-"to" pairs, so if we move up in the same channel,
 	// we'd move only "from" and select half the channel.
 
+	// Check whether the moved item is currently selected and if so, store it as a persistent
+	// model index in active. Also clear the selection as we're going to mess with the active
+	// item.
 	QTreeView *v=g.mw->qtvUsers;
 	QItemSelectionModel *sel=v->selectionModel();
 	QPersistentModelIndex active;
-	QModelIndex oindex = createIndex(oldrow, 0, item);
+	QModelIndex oindex = createIndex(oldrow, 0, oldItem);
 	if (sel->isSelected(oindex) || (oindex == v->currentIndex())) {
-		active = index(item);
+		active = index(oldItem);
 		v->clearSelection();
 		v->setCurrentIndex(QModelIndex());
 	}
 
-	bool expanded = v->isExpanded(index(item));
+	// Check whether the oldItem is currently expanded in order to restore the same
+	// state once we have moved it.
+	bool expanded = v->isExpanded(index(oldItem));
 
 	if (newparent == oldparent) {
-		// Mangle rows. newrow needs to be pre-remove. oldrow needs to be postremove.
+		// If the moving happens within the same parent, we have to watch out that we use the correct
+		// row indices for our operation here.
+		// As we're inserting the new item before remving the old one, newrow has to be the index
+		// applicable before the removal (aka "as is" atm) whereas oldrow has to be applicable
+		// after we've inserted the new item.
 		if (oldrow >= newrow) {
+			// The new item will be inserted above the old one. Thus we have to account for that extra
+			// item in the used row index.
 			oldrow++;
 		} else {
 			newrow++;
 		}
 	}
 
+	// Insert the new item to its (new) parent
 	beginInsertRows(index(newparent), newrow, newrow);
-	t->parent = newparent;
-	newparent->qlChildren.insert(newrow, t);
+	newItem->parent = newparent;
+	newparent->qlChildren.insert(newrow, newItem);
 
-	if (item->cChan) {
-		oldparent->cChan->removeChannel(item->cChan);
-		newparent->cChan->addChannel(item->cChan);
+	if (oldItem->cChan) {
+		// When moving a channel, we'll also have to move any sub-channels
+		oldparent->cChan->removeChannel(oldItem->cChan);
+		newparent->cChan->addChannel(oldItem->cChan);
 	} else {
-		newparent->cChan->addClientUser(item->pUser);
+		newparent->cChan->addClientUser(oldItem->pUser);
 	}
 
 	endInsertRows();
 
 
 	QModelIndexList from, to;
-	from << createIndex(oldrow, 0, item);
-	from << createIndex(oldrow, 1, item);
-	to << createIndex(newrow, 0, t);
-	to << createIndex(newrow, 1, t);
+	from << createIndex(oldrow, 0, oldItem);
+	from << createIndex(oldrow, 1, oldItem);
+	to << createIndex(newrow, 0, newItem);
+	to << createIndex(newrow, 1, newItem);
 
-	recursiveClone(item, t, from, to);
+	// Clone all children of oldItem and attach them to newItem
+	recursiveClone(oldItem, newItem, from, to);
 
+	// Update all persistent model indices that are affected by our action here. This includes (but is in general
+	// not limited to) the "active" index we potentially created above.
 	changePersistentIndexList(from, to);
 
+	// Now that we have added the new index, it is time to actually remove the old one
 	beginRemoveRows(index(oldparent), oldrow, oldrow);
 	oldparent->qlChildren.removeAt(oldrow);
 	endRemoveRows();
 
-	item->wipe();
-	delete item;
+	// oldItem is now longer needed as it is not present in the model anymore and all potential
+	// references to it should be updated to point to the new (moved) item instead.
+	// Thus we can delete it and all its children (which have been cloned and reference-updated
+	// as well.
+	oldItem->wipe();
+	delete oldItem;
 
 	if (active.isValid()) {
+		// If the moved item has been previously selected, we restore that selection to now be the
+		// new item using the "active" model index which has been updated to now point to the new
+		// item.
 		sel->select(active, QItemSelectionModel::SelectCurrent);
 		v->setCurrentIndex(active);
 	}
-	if (expanded)
-		v->expand(index(t));
-	return t;
+
+	if (expanded) {
+		// If the old item (or rather the parent it has been living in) has been expanded,
+		// restore that state for the new item.
+		v->expand(index(newItem));
+	}
+
+	return newItem;
 }
 
 void UserModel::expandAll(Channel *c) {
@@ -888,6 +998,9 @@ ClientUser *UserModel::addUser(unsigned int id, const QString &name) {
 }
 
 void UserModel::removeUser(ClientUser *p) {
+	// First remove all listener proxies this user has at the moment
+	removeChannelListener(p);
+
 	if (g.uiSession && p->uiSession == g.uiSession)
 		g.uiSession = 0;
 	Channel *c = p->cChannel;
@@ -1171,16 +1284,134 @@ Channel *UserModel::addChannel(int id, Channel *p, const QString &name) {
 	return c;
 }
 
+void UserModel::addChannelListener(ClientUser *p, Channel *c) {
+	ModelItem *item = new ModelItem(p, true);
+	ModelItem *citem = ModelItem::c_qhChannels.value(c);
+
+	item->parent = citem;
+
+	int row = citem->insertIndex(p, true);
+
+	beginInsertRows(index(citem), row, row);
+	ChannelListener::addListener(p, c);
+	citem->qlChildren.insert(row, item);
+	endInsertRows();
+
+	while (citem) {
+		citem->iUsers++;
+		citem = citem->parent;
+	}
+
+	updateOverlay();
+}
+
+void UserModel::removeChannelListener(ClientUser *p, Channel *c) {
+	// The way operator[] works for a QHash is that it'll insert a default-constructed
+	// object first, before returning a reference to it, in case there is no entry for
+	// the provided key yet. Thus we never have to worry about explicitly adding an empty
+	// list for a new user before accessing it.
+	const QList<ModelItem *> &items = ModelItem::s_userProxies[p];
+
+	if (items.isEmpty()) {
+		return;
+	}
+
+	if (c) {
+		ModelItem *citem = ModelItem::c_qhChannels.value(c);
+
+		ModelItem *item = nullptr;
+		for (int i = 0; i < items.size(); i++) {
+			if (citem->qlChildren.contains(items[i])) {
+				item = items[i];
+				break;
+			}
+		}
+
+		if (item) {
+			removeChannelListener(item, citem);
+		} else {
+			qCritical("UserModel::removeChannelListener: Can't find item for provided channel");
+		}
+	} else {
+		// remove all items
+		foreach(ModelItem *currentItem, items) {
+			removeChannelListener(currentItem);
+		}
+	}
+}
+
+bool UserModel::isChannelListener(const QModelIndex &idx) const {
+	if (!idx.isValid()) {
+		return false;
+	}
+
+	ModelItem *item;
+	item = static_cast<ModelItem *>(idx.internalPointer());
+
+	return item->isListener;
+}
+
+void UserModel::removeChannelListener(ModelItem *item, ModelItem *citem) {
+	if (!citem) {
+		citem = item->parent;
+	}
+
+	if (!item || !citem) {
+		qCritical("UserModel::removeChannelListener: Invalid state encountered");
+		return;
+	}
+	if (!citem->qlChildren.contains(item)) {
+		qCritical("UserModel::removeChannelListener: Item does not match parent");
+		return;
+	}
+
+	ClientUser *p = item->pUser;
+	Channel *c = citem->cChan;
+
+	if (!p) {
+		qCritical("UserModel::removeChannelListener: Can't find associated ClientUser");
+		return;
+	}
+	if (!c) {
+		qCritical("UserModel::removeChannelListener: Can't find associated Channel");
+		return;
+	}
+
+	int row = citem->qlChildren.indexOf(item);
+
+	beginRemoveRows(index(citem), row, row);
+	ChannelListener::removeListener(p, c);
+	citem->qlChildren.removeAt(row);
+	endRemoveRows();
+
+	while (citem) {
+		citem->iUsers--;
+		citem = citem->parent;
+	}
+
+	if (g.s.ceExpand == Settings::ChannelsWithUsers)
+		collapseEmpty(c);
+
+	updateOverlay();
+
+	delete item;
+}
+
 bool UserModel::removeChannel(Channel *c, const bool onlyIfUnoccupied) {
 	const ModelItem *item = ModelItem::c_qhChannels.value(c);
 	
 	if (onlyIfUnoccupied && item->iUsers !=0) return false; // Checks full hierarchy
 
 	foreach(const ModelItem *i, item->qlChildren) {
-		if (i->pUser)
-			removeUser(i->pUser);
-		else
+		if (i->pUser) {
+			if (i->isListener) {
+				removeChannelListener(i->pUser, c);
+			} else {
+				removeUser(i->pUser);
+			}
+		} else {
 			removeChannel(i->cChan);
+		}
 	}
 
 	Channel *p = c->cParent;
@@ -1253,6 +1484,13 @@ void UserModel::removeAll() {
 	iChannelDescription = -1;
 	bClicked = false;
 
+	// in order to avoid complications, we remove all ChannelListeners first
+	foreach(i, item->qlChildren) {
+		if (i->pUser && i->isListener) {
+			removeChannelListener(i, item);
+		}
+	}
+
 	foreach(i, item->qlChildren) {
 		if (i->pUser)
 			removeUser(i->pUser);
@@ -1279,6 +1517,31 @@ ClientUser *UserModel::getUser(const QString &hash) const {
 	return qmHashes.value(hash);
 }
 
+ClientUser *UserModel::getSelectedUser() const {
+	QModelIndex selected = getSelectedIndex();
+
+	if (selected.isValid()) {
+		ModelItem *item = static_cast<ModelItem *>(selected.internalPointer());
+
+		return item->pUser;
+	}
+
+	return nullptr;
+}
+
+void UserModel::setSelectedUser(unsigned int session) {
+	QModelIndex idx = index(ClientUser::get(session));
+
+	if (!idx.isValid()) {
+		return;
+	}
+
+	QTreeView *v = g.mw->qtvUsers;
+	if (v) {
+		v->setCurrentIndex(idx);
+	}
+}
+
 Channel *UserModel::getChannel(const QModelIndex &idx) const {
 	if (! idx.isValid())
 		return NULL;
@@ -1290,6 +1553,31 @@ Channel *UserModel::getChannel(const QModelIndex &idx) const {
 		return item->pUser->cChannel;
 	else
 		return item->cChan;
+}
+
+Channel *UserModel::getSelectedChannel() const {
+	QModelIndex selected = getSelectedIndex();
+
+	if (selected.isValid()) {
+		ModelItem *item = static_cast<ModelItem *>(selected.internalPointer());
+
+		return item->cChan;
+	}
+
+	return nullptr;
+}
+
+void UserModel::setSelectedChannel(int id) {
+	QModelIndex idx = index(Channel::get(id));
+
+	if (!idx.isValid()) {
+		return;
+	}
+
+	QTreeView *v = g.mw->qtvUsers;
+	if (v) {
+		v->setCurrentIndex(idx);
+	}
 }
 
 Channel *UserModel::getSubChannel(Channel *p, int idx) const {
@@ -1551,6 +1839,8 @@ bool UserModel::dropMimeData(const QMimeData *md, Qt::DropAction, int row, int c
 }
 
 void UserModel::updateOverlay() const {
+#ifdef USE_OVERLAY
 	g.o->updateOverlay();
+#endif
 	g.lcd->updateUserView();
 }

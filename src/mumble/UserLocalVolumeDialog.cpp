@@ -37,6 +37,7 @@
 #include "UserLocalVolumeDialog.h"
 #include "ClientUser.h"
 #include "Database.h"
+#include "MainWindow.h"
 
 #include <QtGui/QCloseEvent>
 #include <QtWidgets/QPushButton>
@@ -52,6 +53,8 @@ UserLocalVolumeDialog::UserLocalVolumeDialog(unsigned int sessionId,
 	, m_clientSession(sessionId)
 	, m_qmUserVolTracker(qmUserVolTracker) {
 	setupUi(this);
+	qsUserLocalVolume->setAccessibleName(tr("User volume"));
+	qsbUserLocalVolume->setAccessibleName(tr("User volume"));
 
 	ClientUser *user = ClientUser::get(sessionId);
 	if (user) {
@@ -59,6 +62,12 @@ UserLocalVolumeDialog::UserLocalVolumeDialog(unsigned int sessionId,
 		setWindowTitle(title);
 		qsUserLocalVolume->setValue(qRound(log2(user->fLocalVolume) * 6.0));
 		m_originalVolumeAdjustmentDecibel = qsUserLocalVolume->value();
+	}
+
+	if (g.mw && g.mw->windowFlags() & Qt::WindowStaysOnTopHint) {
+		// If the main window is set to always be on top of other windows, we should make the
+		// volume dialog behave the same in order for it to not get hidden behind the main window.
+		setWindowFlags(Qt::WindowStaysOnTopHint);
 	}
 }
 

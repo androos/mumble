@@ -3,7 +3,9 @@
 // that can be found in the LICENSE file at the root of the
 // Mumble source tree or at <https://www.mumble.info/LICENSE>.
 
-#include "Overlay.h"
+#ifdef USE_OVERLAY
+	#include "Overlay.h"
+#endif
 #include "MainWindow.h"
 #include "ServerHandler.h"
 #include "AudioInput.h"
@@ -36,6 +38,7 @@
 #include "UserLockFile.h"
 #include "License.h"
 #include "EnvUtils.h"
+#include "TalkingUI.h"
 
 #include <QtCore/QLibraryInfo>
 #include <QtCore/QProcess>
@@ -124,7 +127,10 @@ int main(int argc, char **argv) {
 
 	Global::g_global_struct = new Global();
 
+#if QT_VERSION < QT_VERSION_CHECK(5,10,0)
+	// For Qt >= 5.10 we use QRandomNumberGenerator that is seeded automatically
 	qsrand(QDateTime::currentDateTime().toTime_t());
+#endif
 
 	g.le = QSharedPointer<LogEmitter>(new LogEmitter());
 	g.c = new DeveloperConsole();
@@ -161,7 +167,7 @@ int main(int argc, char **argv) {
 					"                Allow multiple instances of the client to be started.\n"
 					"  -n, --noidentity\n"
 					"                Suppress loading of identity files (i.e., certificates.)\n"
-					"  -jn, --jackname\n"
+					"  -jn, --jackname <arg>\n"
 					"                Set custom Jack client name.\n"
 					"  --license\n"
 					"                Show the Mumble license.\n"
@@ -169,6 +175,17 @@ int main(int argc, char **argv) {
 					"                Show the Mumble authors.\n"
 					"  --third-party-licenses\n"
 					"                Show licenses for third-party software used by Mumble.\n"
+					"  --window-title-ext <arg>\n"
+					"                Sets a custom window title extension.\n"
+					"  --dump-input-streams\n"
+					"                Dump PCM streams at various parts of the input chain\n"
+					"                (useful for debugging purposes)\n"
+					"                - raw microphone input\n"
+					"                - speaker readback for echo cancelling\n"
+					"                - processed microphone input\n"
+					"  --print-echocancel-queue\n"
+					"                Print on stdout the echo cancellation queue state\n"
+					"                (useful for debugging purposes)\n"
 					"\n"
 				);
 				QString rpcHelpBanner = MainWindow::tr(
@@ -214,8 +231,22 @@ int main(int argc, char **argv) {
 				suppressIdentity = true;
 				g.s.bSuppressIdentity = true;
 			} else if (args.at(i) == QLatin1String("-jn") || args.at(i) == QLatin1String("--jackname")) {
-				g.s.qsJackClientName = QString(args.at(i+1));
-				customJackClientName = true;
+				if (i + 1 < args.count()) {
+					g.s.qsJackClientName = QString(args.at(i+1));
+					customJackClientName = true;
+					++i;
+				} else {
+					qCritical("Missing argument for --jackname!");
+					return 1;
+				}
+			} else if (args.at(i) == QLatin1String("--window-title-ext")) {
+				if (i + 1 < args.count()) {
+					g.windowTitlePostfix = QString(args.at(i+1));
+					++i;
+				} else {
+					qCritical("Missing argument for --window-title-ext!");
+					return 1;
+				}
 			} else if (args.at(i) == QLatin1String("-license") || args.at(i) == QLatin1String("--license")) {
 				printf("%s\n", qPrintable(License::license()));
 				return 0;
@@ -239,6 +270,10 @@ int main(int argc, char **argv) {
 #endif
 					return 1;
 				}
+			} else if (args.at(i) == QLatin1String("--dump-input-streams")) {
+				 g.bDebugDumpInput = true;
+			} else if (args.at(i) == QLatin1String("--print-echocancel-queue")) {
+				 g.bDebugPrintQueue = true;
 			} else {
 				if (!bRpcMode) {
 					QUrl u = QUrl::fromEncoded(args.at(i).toUtf8());
@@ -434,11 +469,10 @@ int main(int argc, char **argv) {
 	g.bc = new BonjourClient();
 #endif
 
-	//TODO: This already loads up the DLL and does some initial hooking, even
-	// when the OL is disabled. This should either not be done (object instantiation)
-	// or the dll loading and preparation be delayed to first use.
+#ifdef USE_OVERLAY
 	g.o = new Overlay();
 	g.o->setActive(g.s.os.bEnable);
+#endif
 
 	g.lcd = new LCD();
 
@@ -450,6 +484,11 @@ int main(int argc, char **argv) {
 	// Main Window
 	g.mw=new MainWindow(NULL);
 	g.mw->show();
+
+	g.talkingUI = new TalkingUI();
+	g.talkingUI->setVisible(g.s.bShowTalkingUI);
+
+	QObject::connect(g.mw, &MainWindow::serverSynchronized, g.talkingUI, &TalkingUI::on_serverSynchronized);
 
 	// Initialize logger
 	// Log::log() needs the MainWindow to already exist. Thus creating the Log instance
@@ -536,13 +575,18 @@ int main(int argc, char **argv) {
 		g.l->log(Log::Warning, CertWizard::tr("<b>Certificate Expiry:</b> Your certificate is about to expire. You need to renew it, or you will no longer be able to connect to servers you are registered on."));
 
 #ifdef QT_NO_DEBUG
+	// Only perform the version-check for non-debug builds
+	if (g.s.bUpdateCheck) {
+		// Use different settings for the version checks depending on whether this is a snapshot build
+		// or a normal release build
 #ifndef SNAPSHOT_BUILD
-	if (g.s.bUpdateCheck)
-#endif
+		// release build
 		new VersionCheck(true, g.mw);
-#ifdef SNAPSHOT_BUILD
-	new VersionCheck(false, g.mw, true);
+#else
+		// snapshot build
+		new VersionCheck(false, g.mw, true);
 #endif
+	}
 #else
 	g.mw->msgBox(MainWindow::tr("Skipping version check in debug mode."));
 #endif
@@ -587,6 +631,7 @@ int main(int argc, char **argv) {
 		QThread::yieldCurrentThread();
 	sh.reset();
 
+	delete g.talkingUI;
 	delete g.mw;
 
 	delete g.nam;
@@ -600,7 +645,9 @@ int main(int argc, char **argv) {
 	delete g.bc;
 #endif
 
+#ifdef USE_OVERLAY
 	delete g.o;
+#endif
 
 	delete g.c;
 	g.le.clear();

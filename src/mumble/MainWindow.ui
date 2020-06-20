@@ -48,7 +48,7 @@
      <x>0</x>
      <y>0</y>
      <width>671</width>
-     <height>22</height>
+     <height>30</height>
     </rect>
    </property>
    <widget class="QMenu" name="qmConfig">
@@ -99,7 +99,7 @@
    <property name="minimumSize">
     <size>
      <width>250</width>
-     <height>93</height>
+     <height>121</height>
     </size>
    </property>
    <property name="features">
@@ -915,6 +915,58 @@ the channel's context menu.</string>
    </property>
    <property name="toolTip">
     <string>Shows the main Mumble window.</string>
+   </property>
+  </action>
+  <action name="qaChannelListen">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Listen to channel</string>
+   </property>
+   <property name="toolTip">
+    <string>Listen to this channel without joining it</string>
+   </property>
+  </action>
+  <action name="qaListenerLocalVolume">
+   <property name="text">
+    <string>Local Volume Adjustment...</string>
+   </property>
+   <property name="toolTip">
+    <string>Locally adjust the volume for this virtual ear.</string>
+   </property>
+  </action>
+  <action name="qaTalkingUIToggle">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Talking UI</string>
+   </property>
+   <property name="toolTip">
+    <string>Toggles the visibility of the TalkingUI.</string>
+   </property>
+  </action>
+  <action name="qaUserJoin">
+   <property name="text">
+    <string>Join user's channel</string>
+   </property>
+   <property name="toolTip">
+    <string>Joins the channel of this user.</string>
+   </property>
+  </action>
+  <action name="qaUserLocalIgnoreTTS">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>Disable Text-To-Speech</string>
+   </property>
+   <property name="toolTip">
+    <string>Locally disable Text-To-Speech for this user's text chat messages.</string>
+   </property>
+   <property name="whatsThis">
+    <string>Silently disables Text-To-Speech for all text messages from the user.</string>
    </property>
   </action>
  </widget>

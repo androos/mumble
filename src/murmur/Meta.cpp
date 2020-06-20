@@ -36,6 +36,10 @@
 # include <sys/resource.h>
 #endif
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,10,0)
+	#include <QRandomGenerator>
+#endif
+
 MetaParams Meta::mp;
 
 #ifdef Q_OS_WIN
@@ -49,6 +53,8 @@ MetaParams::MetaParams() {
 	iMaxBandwidth = 72000;
 	iMaxUsers = 1000;
 	iMaxUsersPerChannel = 0;
+	iMaxListenersPerChannel = -1;
+	iMaxListenerProxiesPerUser = -1;
 	iMaxTextMessageLength = 5000;
 	iMaxImageMessageLength = 131072;
 	legacyPasswordHash = false;
@@ -76,6 +82,7 @@ MetaParams::MetaParams() {
 	iBanTries = 10;
 	iBanTimeframe = 120;
 	iBanTime = 300;
+	bBanSuccessful = true;
 
 #ifdef Q_OS_UNIX
 	uiUid = uiGid = 0;
@@ -93,6 +100,9 @@ MetaParams::MetaParams() {
 	iMessageBurst = 5;
 
 	qsCiphers = MumbleSSL::defaultOpenSSLCipherString();
+
+	bLogGroupChanges = false;
+	bLogACLChanges = false;
 
 	qsSettings = NULL;
 }
@@ -190,7 +200,12 @@ void MetaParams::read(QString fname) {
 
 	QString qsHost = qsSettings->value("host", QString()).toString();
 	if (! qsHost.isEmpty()) {
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+		foreach(const QString &host, qsHost.split(QRegExp(QLatin1String("\\s+")), Qt::SkipEmptyParts)) {
+#else
+		// Qt 5.14 introduced the Qt::SplitBehavior flags deprecating the QString fields
 		foreach(const QString &host, qsHost.split(QRegExp(QLatin1String("\\s+")), QString::SkipEmptyParts)) {
+#endif
 			QHostAddress qhaddr;
 			if (qhaddr.setAddress(host)) {
 				qlBind << qhaddr;
@@ -280,6 +295,8 @@ void MetaParams::read(QString fname) {
 	bRememberChan = typeCheckedFromSettings("rememberchannel", bRememberChan);
 	iMaxUsers = typeCheckedFromSettings("users", iMaxUsers);
 	iMaxUsersPerChannel = typeCheckedFromSettings("usersperchannel", iMaxUsersPerChannel);
+	iMaxListenersPerChannel = typeCheckedFromSettings("listenersperchannel", iMaxListenersPerChannel);
+	iMaxListenerProxiesPerUser = typeCheckedFromSettings("listenersperuser", iMaxListenerProxiesPerUser);
 	qsWelcomeText = typeCheckedFromSettings("welcometext", qsWelcomeText);
 	bCertRequired = typeCheckedFromSettings("certrequired", bCertRequired);
 	bForceExternalAuth = typeCheckedFromSettings("forceExternalAuth", bForceExternalAuth);
@@ -322,6 +339,7 @@ void MetaParams::read(QString fname) {
 	iBanTries = typeCheckedFromSettings("autobanAttempts", iBanTries);
 	iBanTimeframe = typeCheckedFromSettings("autobanTimeframe", iBanTimeframe);
 	iBanTime = typeCheckedFromSettings("autobanTime", iBanTime);
+	bBanSuccessful = typeCheckedFromSettings("autobanSuccessfulConnections", bBanSuccessful);
 
 	qvSuggestVersion = MumbleVersion::getRaw(qsSettings->value("suggestVersion").toString());
 	if (qvSuggestVersion.toUInt() == 0)
@@ -334,6 +352,9 @@ void MetaParams::read(QString fname) {
 	qvSuggestPushToTalk = qsSettings->value("suggestPushToTalk");
 	if (qvSuggestPushToTalk.toString().trimmed().isEmpty())
 		qvSuggestPushToTalk = QVariant();
+
+	bLogGroupChanges = typeCheckedFromSettings("loggroupchanges", bLogGroupChanges);
+	bLogACLChanges = typeCheckedFromSettings("logaclchanges", bLogACLChanges);
 
 	iOpusThreshold = typeCheckedFromSettings("opusthreshold", iOpusThreshold);
 
@@ -371,7 +392,12 @@ void MetaParams::read(QString fname) {
 	bool bObfuscate = typeCheckedFromSettings("obfuscate", false);
 	if (bObfuscate) {
 		qWarning("IP address obfuscation enabled.");
+#if QT_VERSION >= QT_VERSION_CHECK(5,10,0)
+		iObfuscate = QRandomGenerator::global()->generate();
+#else
+		// Qt 5.10 introduces the QRandomGenerator class and in Qt 5.15 qrand got deprecated in its favor
 		iObfuscate = qrand();
+#endif
 	}
 	bSendVersion = typeCheckedFromSettings("sendversion", bSendVersion);
 	bAllowPing = typeCheckedFromSettings("allowping", bAllowPing);
@@ -737,8 +763,21 @@ void Meta::killAll() {
 	qhServers.clear();
 }
 
+void Meta::successfulConnectionFrom(const QHostAddress &addr) {
+	if (!mp.bBanSuccessful) {
+		QList<Timer> &ql = qhAttempts[addr];
+		// Seems like this is the most efficient way to clear the list, given:
+		// 1. ql.clear() allocates a new array
+		// 2. ql has less than iBanAttempts members
+		// 3. seems like ql.removeFirst() might actually copy elements to shift to the front
+		while (!ql.empty()) {
+			ql.removeLast();
+		}
+	}
+}
+
 bool Meta::banCheck(const QHostAddress &addr) {
-	if ((mp.iBanTries == 0) || (mp.iBanTimeframe == 0))
+	if ((mp.iBanTries <= 0) || (mp.iBanTimeframe <= 0))
 		return false;
 
 	if (qhBans.contains(addr)) {

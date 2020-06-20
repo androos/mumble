@@ -33,6 +33,8 @@
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
 
+const QString PluginConfig::name = QLatin1String("PluginConfig");
+
 static ConfigWidget *PluginConfigDialogNew(Settings &st) {
 	return new PluginConfig(st);
 }
@@ -72,7 +74,7 @@ struct PluginFetchMeta {
 
 PluginConfig::PluginConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
-
+	qtwPlugins->setAccessibleName(tr("Plugins"));
 	qtwPlugins->header()->setSectionResizeMode(0, QHeaderView::Stretch);
 	qtwPlugins->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
 
@@ -81,6 +83,10 @@ PluginConfig::PluginConfig(Settings &st) : ConfigWidget(st) {
 
 QString PluginConfig::title() const {
 	return tr("Plugins");
+}
+
+const QString &PluginConfig::getName() const {
+	return PluginConfig::name;
 }
 
 QIcon PluginConfig::icon() const {

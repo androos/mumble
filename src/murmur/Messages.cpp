@@ -13,7 +13,9 @@
 #include "Server.h"
 #include "ServerUser.h"
 #include "Version.h"
-#include "CryptState.h"
+#include "crypto/CryptState.h"
+#include "Meta.h"
+#include "ChannelListener.h"
 
 #include <QtCore/QStack>
 #include <QtCore/QtEndian>
@@ -290,12 +292,12 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 	{
 		QMutexLocker l(&uSource->qmCrypt);
 
-		uSource->csCrypt.genKey();
+		uSource->csCrypt->genKey();
 
 		MumbleProto::CryptSetup mpcrypt;
-		mpcrypt.set_key(std::string(reinterpret_cast<const char *>(uSource->csCrypt.raw_key), AES_KEY_SIZE_BYTES));
-		mpcrypt.set_server_nonce(std::string(reinterpret_cast<const char *>(uSource->csCrypt.encrypt_iv), AES_BLOCK_SIZE));
-		mpcrypt.set_client_nonce(std::string(reinterpret_cast<const char *>(uSource->csCrypt.decrypt_iv), AES_BLOCK_SIZE));
+		mpcrypt.set_key(uSource->csCrypt->getRawKey());
+		mpcrypt.set_server_nonce(uSource->csCrypt->getEncryptIV());
+		mpcrypt.set_client_nonce(uSource->csCrypt->getDecryptIV());
 		sendMessage(uSource, mpcrypt);
 	}
 
@@ -459,6 +461,10 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 		if (! u->qsHash.isEmpty())
 			mpus.set_hash(u8(u->qsHash));
 
+		foreach(int channelID, ChannelListener::getListenedChannelsForUser(u)) {
+			mpus.add_listening_channel_add(channelID);
+		}
+
 		sendMessage(uSource, mpus);
 	}
 
@@ -500,6 +506,25 @@ void Server::msgAuthenticate(ServerUser *uSource, MumbleProto::Authenticate &msg
 	if (mpsug.ByteSize() > 0) {
 #endif
 		sendMessage(uSource, mpsug);
+	}
+
+	if (uSource->uiVersion < 0x010400 && Meta::mp.iMaxListenersPerChannel > 0 && Meta::mp.iMaxListenerProxiesPerUser > 0) {
+		// The server has the ChannelListener feature enabled but the client that connects doesn't have version 1.4.0 or newer
+		// meaning that this client doesn't know what ChannelListeners are. Thus we'll send that user a text-message informing
+		// about this.
+		MumbleProto::TextMessage mptm;
+
+		if (Meta::mp.bAllowHTML) {
+			mptm.set_message("<b>[WARNING]</b>: This server has the <b>ChannelListener</b> feature enabled but your client version does not support it. "
+				"This means that users <b>might be listening to what you are saying in your channel without you noticing!</b> "
+				"You can solve this issue by upgrading to Mumble 1.4.0 or newer.");
+		} else {
+			mptm.set_message("[WARNING]: This server has the ChannelListener feature enabled but your client version does not support it. "
+				"This means that users might be listening to what you are saying in your channel without you noticing! "
+				"You can solve this issue by upgrading to Mumble 1.4.0 or newer.");
+		}
+
+		sendMessage(uSource, mptm);
 	}
 
 	log(uSource, "Authenticated");
@@ -650,6 +675,40 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 		}
 	}
 
+	QList<Channel *> listeningChannelsAdd;
+	int passedChannelListener = 0;
+	// Check permission for each channel
+	for (int i = 0; i < msg.listening_channel_add_size(); i++) {
+		Channel *c = qhChannels.value(msg.listening_channel_add(i));
+
+		if (!c) {
+			continue;
+		}
+
+		if (!hasPermission(uSource, c, ChanACL::Listen)) {
+			PERM_DENIED(uSource, c, ChanACL::Listen);
+			continue;
+		}
+
+		if (Meta::mp.iMaxListenersPerChannel >= 0
+				&& Meta::mp.iMaxListenersPerChannel - ChannelListener::getListenerCountForChannel(c) - 1 < 0) {
+			// A limit for the amount of listener proxies per channel is set and it has been reached already
+			PERM_DENIED_FALLBACK(ChannelListenerLimit, 0x010400, QLatin1String("No more listeners allowed in this channel"));
+			continue;
+		}
+
+		if (Meta::mp.iMaxListenerProxiesPerUser >= 0
+				&& Meta::mp.iMaxListenerProxiesPerUser - ChannelListener::getListenedChannelCountForUser(uSource) - passedChannelListener - 1 < 0) {
+			// A limit for the amount of listener proxies per user is set and it has been reached already
+			PERM_DENIED_FALLBACK(UserListenerLimit, 0x010400, QLatin1String("No more listeners allowed in this channel"));
+			continue;
+		}
+
+		passedChannelListener++;
+
+		listeningChannelsAdd << c;
+	}
+
 	if (msg.has_mute() || msg.has_deaf() || msg.has_suppress() || msg.has_priority_speaker()) {
 		if (pDstServerUser->iId == 0) {
 			PERM_DENIED_TYPE(SuperUser);
@@ -671,8 +730,8 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 		bool changed = false;
 		comment = u8(msg.comment());
 		if (uSource != pDstServerUser) {
-			if (! hasPermission(uSource, root, ChanACL::Move)) {
-				PERM_DENIED(uSource, root, ChanACL::Move);
+			if (! hasPermission(uSource, root, ChanACL::ResetUserContent)) {
+				PERM_DENIED(uSource, root, ChanACL::ResetUserContent);
 				return;
 			}
 			if (comment.length() > 0) {
@@ -696,8 +755,8 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 			return;
 		}
 		if (uSource != pDstServerUser) {
-			if (! hasPermission(uSource, root, ChanACL::Move)) {
-				PERM_DENIED(uSource, root, ChanACL::Move);
+			if (! hasPermission(uSource, root, ChanACL::ResetUserContent)) {
+				PERM_DENIED(uSource, root, ChanACL::ResetUserContent);
 				return;
 			}
 			if (msg.texture().length() > 0) {
@@ -721,7 +780,8 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 	}
 
 	// Prevent self-targeting state changes from being applied to others
-	if ((pDstServerUser != uSource) && (msg.has_self_deaf() || msg.has_self_mute() || msg.has_plugin_context() || msg.has_plugin_identity() || msg.has_recording())) {
+	if ((pDstServerUser != uSource) && (msg.has_self_deaf() || msg.has_self_mute() || msg.has_plugin_context() || msg.has_plugin_identity()
+				|| msg.has_recording() || msg.listening_channel_add_size() > 0 || msg.listening_channel_remove_size() > 0)) {
 		return;
 	}
 
@@ -849,6 +909,28 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 		bBroadcast = true;
 	}
 
+	// Handle channel listening
+	// Note that it is important to handle the listening channels after channel-joins
+	foreach(Channel *c, listeningChannelsAdd) {
+		ChannelListener::addListener(uSource, c);
+
+		log(QString::fromLatin1("\"%1\" is now listening to channel \"%2\"").arg(QString(*uSource)).arg(QString(*c)));
+	}
+	for (int i = 0; i < msg.listening_channel_remove_size(); i++) {
+		Channel *c = qhChannels.value(msg.listening_channel_remove(i));
+
+		if (c) {
+			ChannelListener::removeListener(uSource, c);
+
+			log(QString::fromLatin1("\"%1\" is no longer listening to \"%2\"").arg(QString(*uSource)).arg(QString(*c)));
+		}
+	}
+
+	bool listenerChanged = !listeningChannelsAdd.isEmpty() || msg.listening_channel_remove_size() > 0;
+
+	bBroadcast = bBroadcast || listenerChanged;
+
+
 	bool bDstAclChanged = false;
 	if (msg.has_user_id()) {
 		// Handle user (Self-)Registration
@@ -898,8 +980,13 @@ void Server::msgUserState(ServerUser *uSource, MumbleProto::UserState &msg) {
 
 		sendAll(msg, 0x010202);
 
-		if (bDstAclChanged)
+		if (bDstAclChanged) {
 			clearACLCache(pDstServerUser);
+		} else if (listenerChanged) {
+			// We only have to do this if the ACLs didn't change as
+			// clearACLCache calls clearWhisperTargetChache anyways
+			clearWhisperTargetCache();
+		}
 	}
 
 	emit userStateChanged(pDstServerUser);
@@ -1363,6 +1450,58 @@ void Server::msgTextMessage(ServerUser *uSource, MumbleProto::TextMessage &msg) 
 	emit userTextMessage(uSource, tm);
 }
 
+/// Helper function to log the groups of the given channel.
+///
+/// @param server A pointer to the server object the provided channel lives on
+/// @param c A pointer to the channel the groups should be logged for
+/// @param prefix An optional QString that is being printed before the groups
+void logGroups(Server *server, const Channel *c, QString prefix = QString()) {
+	if (!prefix.isEmpty()) {
+		server->log(prefix);
+	}
+
+	if (c->qhGroups.isEmpty()) {
+		server->log(QString::fromLatin1("Channel %1 (%2) has no groups set").arg(c->qsName).arg(c->iId));
+		return;
+	} else {
+		server->log(QString::fromLatin1("%1Listing groups specified for channel \"%2\" (%3)...").arg(prefix.isEmpty() ? "" : "\t").arg(
+					c->qsName).arg(c->iId));
+	}
+
+	foreach(Group *currentGroup, c->qhGroups) {
+		QString memberList;
+		foreach(int m, currentGroup->members()) {
+			memberList += QString::fromLatin1("\"%1\"").arg(server->getUserName(m));
+			memberList += ", ";
+		}
+
+		if (currentGroup->members().size() > 0) {
+			memberList.remove(memberList.length() -2, 2);
+			server->log(QString::fromLatin1("%1Group: \"%2\" contains following users: %3").arg(prefix.isEmpty() ? "\t" : "\t\t").arg(
+						currentGroup->qsName).arg(memberList));
+		} else {
+			server->log(QString::fromLatin1("%1Group \"%2\" doesn't contain any users").arg(prefix.isEmpty() ? "\t" : "\t\t").arg(
+						currentGroup->qsName));
+		}
+	}
+}
+
+/// Helper function to log the ACLs of the given channel.
+///
+/// @param server A pointer to the server object the provided channel lives on
+/// @param c A pointer to the channel the ACLs should be logged for
+/// @param prefix An optional QString that is being printed before the ACLs
+void logACLs(Server *server, const Channel *c, QString prefix = QString()) {
+	if (!prefix.isEmpty()) {
+		server->log(prefix);
+	}
+
+	foreach(const ChanACL *a, c->qlACL) {
+		server->log(QString::fromLatin1("%1%2").arg(prefix.isEmpty() ? "" : "\t").arg(static_cast<QString>(*a)));
+	}
+}
+
+
 void Server::msgACL(ServerUser *uSource, MumbleProto::ACL &msg) {
 	MSG_SETUP(ServerUser::Authenticated);
 
@@ -1468,19 +1607,34 @@ void Server::msgACL(ServerUser *uSource, MumbleProto::ACL &msg) {
 
 			QHash<QString, QSet<int> > hOldTemp;
 
+			if (Meta::mp.bLogGroupChanges || Meta::mp.bLogACLChanges) {
+				log(uSource, QString::fromLatin1("Updating ACL in channel %1").arg(*c));
+			}
+
+			if (Meta::mp.bLogGroupChanges) {
+				logGroups(this, c, QLatin1String("These are the groups before applying the change:"));
+			}
+
 			foreach(g, c->qhGroups) {
 				hOldTemp.insert(g->qsName, g->qsTemporary);
 				delete g;
 			}
 
-			foreach(a, c->qlACL)
+			if (Meta::mp.bLogACLChanges) {
+				logACLs(this, c, QLatin1String("These are the ACLs before applying the changed:"));
+			}
+
+			// Clear old ACLs
+			foreach(a, c->qlACL) {
 				delete a;
+			}
 
 			c->qhGroups.clear();
 			c->qlACL.clear();
 
 			c->bInheritACL = msg.inherit_acls();
 
+			// Add new groups
 			for (int i = 0; i < msg.groups_size(); ++i) {
 				const MumbleProto::ACL_ChanGroup &group = msg.groups(i);
 				g = new Group(c, u8(group.name()));
@@ -1492,9 +1646,15 @@ void Server::msgACL(ServerUser *uSource, MumbleProto::ACL &msg) {
 				for (int j = 0; j < group.remove_size(); ++j)
 					if (!getUserName(group.remove(j)).isEmpty())
 						g->qsRemove << group.remove(j);
+
 				g->qsTemporary = hOldTemp.value(g->qsName);
 			}
 
+			if (Meta::mp.bLogGroupChanges) {
+				logGroups(this, c, QLatin1String("And these are the new groups:"));
+			}
+
+			// Add new ACLs
 			for (int i = 0; i < msg.acls_size(); ++i) {
 				const MumbleProto::ACL_ChanACL &mpacl = msg.acls(i);
 				if (mpacl.has_user_id() && getUserName(mpacl.user_id()).isEmpty())
@@ -1510,6 +1670,11 @@ void Server::msgACL(ServerUser *uSource, MumbleProto::ACL &msg) {
 				a->pDeny = static_cast<ChanACL::Permissions>(mpacl.deny()) & ChanACL::All;
 				a->pAllow = static_cast<ChanACL::Permissions>(mpacl.grant()) & ChanACL::All;
 			}
+
+			if (Meta::mp.bLogACLChanges) {
+				logACLs(this, c, QLatin1String("And these are the new ACLs:"));
+			}
+
 		}
 
 		clearACLCache();
@@ -1583,12 +1748,10 @@ void Server::msgPing(ServerUser *uSource, MumbleProto::Ping &msg) {
 
 	QMutexLocker l(&uSource->qmCrypt);
 
-	CryptState &cs=uSource->csCrypt;
-
-	cs.uiRemoteGood = msg.good();
-	cs.uiRemoteLate = msg.late();
-	cs.uiRemoteLost = msg.lost();
-	cs.uiRemoteResync = msg.resync();
+	uSource->csCrypt->uiRemoteGood = msg.good();
+	uSource->csCrypt->uiRemoteLate = msg.late();
+	uSource->csCrypt->uiRemoteLost = msg.lost();
+	uSource->csCrypt->uiRemoteResync = msg.resync();
 
 	uSource->dUDPPingAvg = msg.udp_ping_avg();
 	uSource->dUDPPingVar = msg.udp_ping_var();
@@ -1601,10 +1764,10 @@ void Server::msgPing(ServerUser *uSource, MumbleProto::Ping &msg) {
 
 	msg.Clear();
 	msg.set_timestamp(ts);
-	msg.set_good(cs.uiGood);
-	msg.set_late(cs.uiLate);
-	msg.set_lost(cs.uiLost);
-	msg.set_resync(cs.uiResync);
+	msg.set_good(uSource->csCrypt->uiGood);
+	msg.set_late(uSource->csCrypt->uiLate);
+	msg.set_lost(uSource->csCrypt->uiLost);
+	msg.set_resync(uSource->csCrypt->uiResync);
 
 	sendMessage(uSource, msg);
 }
@@ -1616,13 +1779,13 @@ void Server::msgCryptSetup(ServerUser *uSource, MumbleProto::CryptSetup &msg) {
 
 	if (! msg.has_client_nonce()) {
 		log(uSource, "Requested crypt-nonce resync");
-		msg.set_server_nonce(std::string(reinterpret_cast<const char *>(uSource->csCrypt.encrypt_iv), AES_BLOCK_SIZE));
+		msg.set_server_nonce(uSource->csCrypt->getEncryptIV());
 		sendMessage(uSource, msg);
 	} else {
 		const std::string &str = msg.client_nonce();
-		if (str.size()  == AES_BLOCK_SIZE) {
-			uSource->csCrypt.uiResync++;
-			memcpy(uSource->csCrypt.decrypt_iv, str.data(), AES_BLOCK_SIZE);
+		uSource->csCrypt->uiResync++;
+		if(!uSource->csCrypt->setDecryptIV(str)){
+			qWarning("Messages: Cipher resync failed: Invalid nonce from the client!");
 		}
 	}
 }
@@ -1643,20 +1806,37 @@ void Server::msgContextAction(ServerUser *uSource, MumbleProto::ContextAction &m
 	emit contextAction(uSource, u8(msg.action()), session, id);
 }
 
+/// @param str The std::string to convert
+/// @param maxSize The maximum allowed size for this string
+/// @returns The given std::string converted to a QString, if its size is less
+///  	than or equal to the given maxSize. If it is bigger, "[[Invalid]]"
+///  	is returned.
+QString convertWithSizeRestriction(const std::string &str, size_t maxSize) {
+	if (str.size() > maxSize) {
+		return QLatin1String("[[Invalid]]");
+	}
+
+	return QString::fromStdString(str);
+}
+
 void Server::msgVersion(ServerUser *uSource, MumbleProto::Version &msg) {
 	RATELIMIT(uSource);
 
-	if (msg.has_version())
+	if (msg.has_version()) {
 		uSource->uiVersion=msg.version();
-	if (msg.has_release())
-		uSource->qsRelease = u8(msg.release());
+	}
+	if (msg.has_release()) {
+		uSource->qsRelease = convertWithSizeRestriction(msg.release(), 100);
+	}
 	if (msg.has_os()) {
-		uSource->qsOS = u8(msg.os());
-		if (msg.has_os_version())
-			uSource->qsOSVersion = u8(msg.os_version());
+		uSource->qsOS = convertWithSizeRestriction(msg.os(), 40);
+
+		if (msg.has_os_version()) {
+			uSource->qsOSVersion = convertWithSizeRestriction(msg.os_version(), 60);
+		}
 	}
 
-	log(uSource, QString("Client version %1 (%2: %3)").arg(MumbleVersion::toString(uSource->uiVersion)).arg(uSource->qsOS).arg(uSource->qsRelease));
+	log(uSource, QString("Client version %1 (%2 %3: %4)").arg(MumbleVersion::toString(uSource->uiVersion)).arg(uSource->qsOS).arg(uSource->qsOSVersion).arg(uSource->qsRelease));
 }
 
 void Server::msgUserList(ServerUser *uSource, MumbleProto::UserList &msg) {
@@ -1824,19 +2004,18 @@ void Server::msgUserStats(ServerUser*uSource, MumbleProto::UserStats &msg) {
 		MumbleProto::UserStats_Stats *mpusss;
 
 		QMutexLocker l(&pDstServerUser->qmCrypt);
-		const CryptState &cs = pDstServerUser->csCrypt;
 
 		mpusss = msg.mutable_from_client();
-		mpusss->set_good(cs.uiGood);
-		mpusss->set_late(cs.uiLate);
-		mpusss->set_lost(cs.uiLost);
-		mpusss->set_resync(cs.uiResync);
+		mpusss->set_good(pDstServerUser->csCrypt->uiGood);
+		mpusss->set_late(pDstServerUser->csCrypt->uiLate);
+		mpusss->set_lost(pDstServerUser->csCrypt->uiLost);
+		mpusss->set_resync(pDstServerUser->csCrypt->uiResync);
 
 		mpusss = msg.mutable_from_server();
-		mpusss->set_good(cs.uiRemoteGood);
-		mpusss->set_late(cs.uiRemoteLate);
-		mpusss->set_lost(cs.uiRemoteLost);
-		mpusss->set_resync(cs.uiRemoteResync);
+		mpusss->set_good(pDstServerUser->csCrypt->uiRemoteGood);
+		mpusss->set_late(pDstServerUser->csCrypt->uiRemoteLate);
+		mpusss->set_lost(pDstServerUser->csCrypt->uiRemoteLost);
+		mpusss->set_resync(pDstServerUser->csCrypt->uiRemoteResync);
 	}
 
 	msg.set_udp_packets(pDstServerUser->uiUDPPackets);

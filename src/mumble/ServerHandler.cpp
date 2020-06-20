@@ -195,16 +195,16 @@ void ServerHandler::udpReady() {
 		if (! connection)
 			continue;
 
-		if (! connection->csCrypt.isValid())
+		if (! connection->csCrypt->isValid())
 			continue;
 
 		if (buflen < 5)
 			continue;
 
-		if (! connection->csCrypt.decrypt(reinterpret_cast<const unsigned char *>(encrypted), reinterpret_cast<unsigned char *>(buffer), buflen)) {
-			if (connection->csCrypt.tLastGood.elapsed() > 5000000ULL) {
-				if (connection->csCrypt.tLastRequest.elapsed() > 5000000ULL) {
-					connection->csCrypt.tLastRequest.restart();
+		if (! connection->csCrypt->decrypt(reinterpret_cast<const unsigned char *>(encrypted), reinterpret_cast<unsigned char *>(buffer), buflen)) {
+			if (connection->csCrypt->tLastGood.elapsed() > 5000000ULL) {
+				if (connection->csCrypt->tLastRequest.elapsed() > 5000000ULL) {
+					connection->csCrypt->tLastRequest.restart();
 					MumbleProto::CryptSetup mpcs;
 					sendMessage(mpcs);
 				}
@@ -261,7 +261,7 @@ void ServerHandler::sendMessage(const char *data, int len, bool force) {
 		return;
 
 	ConnectionPtr connection(cConnection);
-	if (!connection || !connection->csCrypt.isValid())
+	if (!connection || !connection->csCrypt->isValid())
 		return;
 
 	if (!force && (NetworkConfig::TcpModeEnabled() || !bUdp)) {
@@ -275,7 +275,9 @@ void ServerHandler::sendMessage(const char *data, int len, bool force) {
 
 		QApplication::postEvent(this, new ServerHandlerMessageEvent(qba, MessageHandler::UDPTunnel, true));
 	} else {
-		connection->csCrypt.encrypt(reinterpret_cast<const unsigned char *>(data), crypto, len);
+		if (!connection->csCrypt->encrypt(reinterpret_cast<const unsigned char *>(data), crypto, len)) {
+			return;
+		}
 		qusUdp->writeDatagram(reinterpret_cast<const char *>(crypto), len + 4, qhaRemote, usResolvedPort);
 	}
 }
@@ -504,12 +506,10 @@ void ServerHandler::sendPingInternal() {
 		return;
 	}
 
-	if (g.s.iMaxInFlightTCPPings >= 0 && iInFlightTCPPings >= g.s.iMaxInFlightTCPPings) {
+	if (g.s.iMaxInFlightTCPPings > 0 && iInFlightTCPPings >= g.s.iMaxInFlightTCPPings) {
 		serverConnectionClosed(QAbstractSocket::UnknownSocketError, tr("Server is not responding to TCP pings"));
 		return;
 	}
-
-	CryptState &cs = connection->csCrypt;
 
 	quint64 t = tTimestamp.elapsed();
 
@@ -524,10 +524,10 @@ void ServerHandler::sendPingInternal() {
 	MumbleProto::Ping mpp;
 
 	mpp.set_timestamp(t);
-	mpp.set_good(cs.uiGood);
-	mpp.set_late(cs.uiLate);
-	mpp.set_lost(cs.uiLost);
-	mpp.set_resync(cs.uiResync);
+	mpp.set_good(connection->csCrypt->uiGood);
+	mpp.set_late(connection->csCrypt->uiLate);
+	mpp.set_lost(connection->csCrypt->uiLost);
+	mpp.set_resync(connection->csCrypt->uiResync);
 
 
 	if (boost::accumulators::count(accUDP)) {
@@ -578,26 +578,25 @@ void ServerHandler::message(unsigned int msgType, const QByteArray &qbaMsg) {
 			// connection is still OK.
 			iInFlightTCPPings = 0;
 
-			CryptState &cs = connection->csCrypt;
-			cs.uiRemoteGood = msg.good();
-			cs.uiRemoteLate = msg.late();
-			cs.uiRemoteLost = msg.lost();
-			cs.uiRemoteResync = msg.resync();
+			connection->csCrypt->uiRemoteGood = msg.good();
+			connection->csCrypt->uiRemoteLate = msg.late();
+			connection->csCrypt->uiRemoteLost = msg.lost();
+			connection->csCrypt->uiRemoteResync = msg.resync();
 			accTCP(static_cast<double>(tTimestamp.elapsed() - msg.timestamp()) / 1000.0);
 
-			if (((cs.uiRemoteGood == 0) || (cs.uiGood == 0)) && bUdp && (tTimestamp.elapsed() > 20000000ULL)) {
+			if (((connection->csCrypt->uiRemoteGood == 0) || (connection->csCrypt->uiGood == 0)) && bUdp && (tTimestamp.elapsed() > 20000000ULL)) {
 				bUdp = false;
 				if (! NetworkConfig::TcpModeEnabled()) {
-					if ((cs.uiRemoteGood == 0) && (cs.uiGood == 0))
+					if ((connection->csCrypt->uiRemoteGood == 0) && (connection->csCrypt->uiGood == 0))
 						g.mw->msgBox(tr("UDP packets cannot be sent to or received from the server. Switching to TCP mode."));
-					else if (cs.uiRemoteGood == 0)
+					else if (connection->csCrypt->uiRemoteGood == 0)
 						g.mw->msgBox(tr("UDP packets cannot be sent to the server. Switching to TCP mode."));
 					else
 						g.mw->msgBox(tr("UDP packets cannot be received from the server. Switching to TCP mode."));
 
 					database->setUdp(qbaDigest, false);
 				}
-			} else if (!bUdp && (cs.uiRemoteGood > 3) && (cs.uiGood > 3)) {
+			} else if (!bUdp && (connection->csCrypt->uiRemoteGood > 3) && (connection->csCrypt->uiGood > 3)) {
 				bUdp = true;
 				if (! NetworkConfig::TcpModeEnabled()) {
 					g.mw->msgBox(tr("UDP packets can be sent to and received from the server. Switching back to UDP mode."));
@@ -833,6 +832,48 @@ void ServerHandler::joinChannel(unsigned int uiSession, unsigned int channel, co
 	sendMessage(mpus);
 }
 
+void ServerHandler::startListeningToChannel(int channel) {
+	startListeningToChannels({ channel });
+}
+
+void ServerHandler::startListeningToChannels(const QList<int> &channelIDs) {
+	if (channelIDs.isEmpty()) {
+		return;
+	}
+
+	MumbleProto::UserState mpus;
+	mpus.set_session(g.uiSession);
+
+	foreach(int currentChannel, channelIDs) {
+		// The naming of the function is a bit unfortunate but what this does is to add
+		// the channel ID to the message field listening_channel_add
+		mpus.add_listening_channel_add(currentChannel);
+	}
+
+	sendMessage(mpus);
+}
+
+void ServerHandler::stopListeningToChannel(int channel) {
+	stopListeningToChannels({ channel });
+}
+
+void ServerHandler::stopListeningToChannels(const QList<int> &channelIDs) {
+	if (channelIDs.isEmpty()) {
+		return;
+	}
+
+	MumbleProto::UserState mpus;
+	mpus.set_session(g.uiSession);
+
+	foreach(int currentChannel, channelIDs) {
+		// The naming of the function is a bit unfortunate but what this does is to add
+		// the channel ID to the message field listening_channel_remove
+		mpus.add_listening_channel_remove(currentChannel);
+	}
+
+	sendMessage(mpus);
+}
+
 void ServerHandler::createChannel(unsigned int parent_id, const QString &name, const QString &description, unsigned int position, bool temporary, unsigned int maxUsers) {
 	MumbleProto::ChannelState mpcs;
 	mpcs.set_parent(parent_id);
@@ -1023,4 +1064,3 @@ QUrl ServerHandler::getServerURL(bool withPassword) const {
 	
 	return url;
 }
-

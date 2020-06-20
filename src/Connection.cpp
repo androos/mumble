@@ -29,12 +29,16 @@ Connection::Connection(QObject *p, QSslSocket *qtsSock) : QObject(p) {
 	qtsSocket->setParent(this);
 	iPacketLength = -1;
 	bDisconnectedEmitted = false;
+	csCrypt = std::make_unique<CryptStateOCB2>();
 
 	static bool bDeclared = false;
 	if (! bDeclared) {
 		bDeclared = true;
 		qRegisterMetaType<QAbstractSocket::SocketError>("QAbstractSocket::SocketError");
 	}
+
+	int nodelay = 1;
+	setsockopt(static_cast<int>(qtsSocket->socketDescriptor()), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&nodelay), static_cast<socklen_t>(sizeof(nodelay)));
 
 	connect(qtsSocket, SIGNAL(error(QAbstractSocket::SocketError)), this, SLOT(socketError(QAbstractSocket::SocketError)));
 	connect(qtsSocket, SIGNAL(encrypted()), this, SIGNAL(encrypted()));
@@ -190,14 +194,7 @@ void Connection::forceFlush() {
 	if (! qtsSocket->isEncrypted())
 		return;
 
-	int nodelay;
-
 	qtsSocket->flush();
-
-	nodelay = 1;
-	setsockopt(static_cast<int>(qtsSocket->socketDescriptor()), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&nodelay), static_cast<socklen_t>(sizeof(nodelay)));
-	nodelay = 0;
-	setsockopt(static_cast<int>(qtsSocket->socketDescriptor()), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<char *>(&nodelay), static_cast<socklen_t>(sizeof(nodelay)));
 }
 
 void Connection::disconnectSocket(bool force) {

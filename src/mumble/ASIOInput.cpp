@@ -18,6 +18,8 @@
 // From os_win.cpp.
 extern HWND mumble_mw_hwnd;
 
+const QString ASIOConfig::name = QLatin1String("ASIOConfig");
+
 class ASIOAudioInputRegistrar : public AudioInputRegistrar {
 	public:
 		ASIOAudioInputRegistrar();
@@ -126,6 +128,10 @@ ASIOInput *ASIOInput::aiSelf;
 
 ASIOConfig::ASIOConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
+
+	qcbDevice->setAccessibleName(tr("Device to use for microphone"));
+	qlwMic->setAccessibleName(tr("List of microphones"));
+	qlwSpeaker->setAccessibleName(tr("List of speakers"));
 
 	// List of devices known to misbehave or be totally useless
 	QStringList blacklist;
@@ -323,6 +329,10 @@ void ASIOConfig::on_qpbRemSpeaker_clicked() {
 
 QString ASIOConfig::title() const {
 	return tr("ASIO");
+}
+
+const QString &ASIOConfig::getName() const {
+	return ASIOConfig::name;
 }
 
 QIcon ASIOConfig::icon() const {

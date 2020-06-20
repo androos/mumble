@@ -24,8 +24,12 @@
 #include "PacketDataStream.h"
 #include "Timer.h"
 #include "Message.h"
-#include "CryptState.h"
+#include "crypto/CryptState.h"
 #include "Mumble.pb.h"
+
+#if QT_VERSION >= QT_VERSION_CHECK(5,10,0)
+	#include <QRandomGenerator>
+#endif
 
 class Client : public QThread {
 		Q_OBJECT
@@ -34,7 +38,7 @@ class Client : public QThread {
 		bool sender;
 		struct sockaddr_in srv;
 		unsigned int uiSession;
-		CryptState crypt;
+		CryptStateOCB2 crypt;
 		int rcvd;
 		int socket;
 		int seq;
@@ -142,7 +146,12 @@ void Client::ping() {
 
 void Client::sendVoice() {
 	unsigned char buffer[1024];
+#if QT_VERSION >= QT_VERSION_CHECK(5,10,0)
+	int len = 32 + (QRandomGenerator::global()->generate() & 0x3f);
+#else
+	// Qt 5.10 introduces the QRandomGenerator class and in Qt 5.15 qrand got deprecated in its favor
 	int len = 32 + (qrand() & 0x3f);
+#endif
 
 	// Regular voice, nothing special
 	buffer[0] = 0;
@@ -220,16 +229,16 @@ void Client::readyRead() {
 							const std::string &client_nonce = msg.client_nonce();
 							const std::string &server_nonce = msg.server_nonce();
 							if (key.size() == AES_BLOCK_SIZE && client_nonce.size() == AES_BLOCK_SIZE && server_nonce.size() == AES_BLOCK_SIZE)
-								crypt.setKey(reinterpret_cast<const unsigned char *>(key.data()), reinterpret_cast<const unsigned char *>(client_nonce.data()), reinterpret_cast<const unsigned char *>(server_nonce.data()));
+								crypt.setKey(key, client_nonce, server_nonce);
 						} else if (msg.has_server_nonce()) {
 							const std::string &server_nonce = msg.server_nonce();
 							if (server_nonce.size() == AES_BLOCK_SIZE) {
 								crypt.uiResync++;
-								memcpy(crypt.decrypt_iv, server_nonce.data(), AES_BLOCK_SIZE);
+								crypt.setDecryptIV(server_nonce);
 							}
 						} else {
 							MumbleProto::CryptSetup mpcs;
-							mpcs.set_client_nonce(std::string(reinterpret_cast<const char *>(crypt.encrypt_iv), AES_BLOCK_SIZE));
+							mpcs.set_client_nonce(crypt.getEncryptIV());
 							sendMessage(mpcs, MessageHandler::CryptSetup);
 						}
 						break;

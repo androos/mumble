@@ -17,6 +17,8 @@
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
 
+const QString LookConfig::name = QLatin1String("LookConfig");
+
 static ConfigWidget *LookConfigNew(Settings &st) {
 	return new LookConfig(st);
 }
@@ -25,7 +27,21 @@ static ConfigRegistrar registrar(1100, LookConfigNew);
 
 LookConfig::LookConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
-
+	qsbSilentUserLifetime->setAccessibleName(tr("Silent user lifetime"));
+	qsbPrefixCharCount->setAccessibleName(tr("Prefix character count"));
+	qsbChannelHierarchyDepth->setAccessibleName(tr("Channel hierarchy depth"));
+	qleChannelSeparator->setAccessibleName(tr("Channel separator"));
+	qsbPostfixCharCount->setAccessibleName(tr("Postfix character count"));
+	qleAbbreviationReplacement->setAccessibleName(tr("Abbreviation replacement"));
+	qsbMaxNameLength->setAccessibleName(tr("Maximum name length"));
+	qsbRelFontSize->setAccessibleName(tr("Relative font size"));
+	qcbLanguage->setAccessibleName(tr("Language"));
+	qcbTheme->setAccessibleName(tr("Theme"));
+	qcbAlwaysOnTop->setAccessibleName(tr("Always on top"));
+	qcbChannelDrag->setAccessibleName(tr("Channel dragging"));
+	qcbExpand->setAccessibleName(tr("Automatically expand channels when"));
+	qcbUserDrag->setAccessibleName(tr("User dragging behavior"));
+	
 #ifndef Q_OS_MAC
 	if (! QSystemTrayIcon::isSystemTrayAvailable())
 #endif
@@ -91,6 +107,10 @@ LookConfig::LookConfig(Settings &st) : ConfigWidget(st) {
 
 QString LookConfig::title() const {
 	return tr("User Interface");
+}
+
+const QString &LookConfig::getName() const {
+	return LookConfig::name;
 }
 
 QIcon LookConfig::icon() const {
@@ -177,6 +197,18 @@ void LookConfig::load(const Settings &r) {
 	
 	const boost::optional<ThemeInfo::StyleInfo> configuredStyle = Themes::getConfiguredStyle(r);
 	reloadThemes(configuredStyle);
+
+	loadCheckBox(qcbLocalUserVisible, r.bTalkingUI_LocalUserStaysVisible);
+	loadCheckBox(qcbAbbreviateChannelNames, r.bTalkingUI_AbbreviateChannelNames);
+	loadCheckBox(qcbAbbreviateCurrentChannel, r.bTalkingUI_AbbreviateCurrentChannel);
+	qsbRelFontSize->setValue(r.iTalkingUI_RelativeFontSize);
+	qsbSilentUserLifetime->setValue(r.iTalkingUI_SilentUserLifeTime);
+	qsbChannelHierarchyDepth->setValue(r.iTalkingUI_ChannelHierarchyDepth);
+	qsbMaxNameLength->setValue(r.iTalkingUI_MaxChannelNameLength);
+	qsbPrefixCharCount->setValue(r.iTalkingUI_PrefixCharCount);
+	qsbPostfixCharCount->setValue(r.iTalkingUI_PostfixCharCount);
+	qleChannelSeparator->setText(r.qsTalkingUI_ChannelSeparator);
+	qleAbbreviationReplacement->setText(r.qsTalkingUI_AbbreviationReplacement);
 }
 
 void LookConfig::save() const {
@@ -229,6 +261,18 @@ void LookConfig::save() const {
 	} else {
 		Themes::setConfiguredStyle(s, themeData.value<ThemeInfo::StyleInfo>(), s.requireRestartToApply);
 	}
+
+	s.bTalkingUI_LocalUserStaysVisible = qcbLocalUserVisible->isChecked();
+	s.bTalkingUI_AbbreviateChannelNames = qcbAbbreviateChannelNames->isChecked();
+	s.bTalkingUI_AbbreviateCurrentChannel = qcbAbbreviateCurrentChannel->isChecked();
+	s.iTalkingUI_RelativeFontSize = qsbRelFontSize->value();
+	s.iTalkingUI_SilentUserLifeTime = qsbSilentUserLifetime->value();
+	s.iTalkingUI_ChannelHierarchyDepth = qsbChannelHierarchyDepth->value();
+	s.iTalkingUI_MaxChannelNameLength = qsbMaxNameLength->value();
+	s.iTalkingUI_PrefixCharCount = qsbPrefixCharCount->value();
+	s.iTalkingUI_PostfixCharCount = qsbPostfixCharCount->value();
+	s.qsTalkingUI_ChannelSeparator = qleChannelSeparator->text();
+	s.qsTalkingUI_AbbreviationReplacement = qleAbbreviationReplacement->text();
 }
 
 void LookConfig::accept() const {
@@ -243,4 +287,17 @@ void LookConfig::themeDirectoryChanged() {
 	} else {
 		reloadThemes(themeData.value<ThemeInfo::StyleInfo>());
 	}
+}
+
+void LookConfig::on_qcbAbbreviateChannelNames_stateChanged(int state) {
+	bool abbreviateNames = state == Qt::Checked;
+
+	// Only enable the abbreviation related settings if abbreviation is actually enabled
+	qcbAbbreviateCurrentChannel->setEnabled(abbreviateNames);
+	qsbChannelHierarchyDepth->setEnabled(abbreviateNames);
+	qsbMaxNameLength->setEnabled(abbreviateNames);
+	qsbPrefixCharCount->setEnabled(abbreviateNames);
+	qsbPostfixCharCount->setEnabled(abbreviateNames);
+	qleChannelSeparator->setEnabled(abbreviateNames);
+	qleAbbreviationReplacement->setEnabled(abbreviateNames);
 }

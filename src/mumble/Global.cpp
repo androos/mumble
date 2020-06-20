@@ -71,6 +71,7 @@ Global::Global() {
 	p = 0;
 	nam = 0;
 	c = 0;
+	talkingUI = 0;
 	uiSession = 0;
 	uiDoublePush = 1000000;
 	iPushToTalk = 0;
@@ -103,15 +104,20 @@ Global::Global() {
 
 	qs = NULL;
 
-	ocIntercept = NULL;
 	bc = NULL;
 	lcd = NULL;
-	o = NULL;
 	l = NULL;
+
+#ifdef USE_OVERLAY
+	ocIntercept = NULL;
+	o = NULL;
+#endif
 
 	bHappyEaster = false;
 
 	bQuit = false;
+	bDebugDumpInput = false;
+	bDebugPrintQueue = false;
 
 	QStringList qsl;
 	qsl << QCoreApplication::instance()->applicationDirPath();

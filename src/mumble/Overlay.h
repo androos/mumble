@@ -15,6 +15,8 @@
 #include "OverlayText.h"
 #include "../../overlay/overlay.h"
 
+#include <atomic>
+
 #include "ui_OverlayEditor.h"
 
 #ifdef Q_OS_MAC
@@ -84,8 +86,17 @@ class Overlay : public QObject {
 
 		QSet<unsigned int> qsQueried;
 		QSet<unsigned int> qsQuery;
+		/// A flag indicating if the platformInit has been called already
+		std::atomic<bool> m_initialized;
 
+		/// Initializes the overlay, if it hasn't been initialized yet
+		void initialize();
+
+		// These 2 functions (among others) are implemented by the system-specific backend
 		void platformInit();
+		void setActiveInternal(bool act);
+
+		void createPipe();
 
 		QMap<QString, QString> qmOverlayHash;
 		QLocalServer *qlsServer;

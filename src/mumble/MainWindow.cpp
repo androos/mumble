@@ -26,7 +26,9 @@
 #include "Log.h"
 #include "Net.h"
 #include "NetworkConfig.h"
-#include "OverlayClient.h"
+#ifdef USE_OVERLAY
+	#include "OverlayClient.h"
+#endif
 #include "Plugins.h"
 #include "PTTButtonWidget.h"
 #include "RichTextEditor.h"
@@ -48,6 +50,10 @@
 #include "Screen.h"
 #include "SvgIcon.h"
 #include "Utils.h"
+#include "ListenerLocalVolumeDialog.h"
+#include "ChannelListener.h"
+#include "Markdown.h"
+#include "TalkingUI.h"
 
 #ifdef Q_OS_WIN
 # include "TaskList.h"
@@ -144,16 +150,24 @@ MainWindow::MainWindow(QWidget *p) : QMainWindow(p) {
 
 	qmUser = new QMenu(tr("&User"), this);
 	qmChannel = new QMenu(tr("&Channel"), this);
+	qmListener = new QMenu(tr("&Listener"), this);
 
 	qmDeveloper = new QMenu(tr("&Developer"), this);
+
+	qaEmpty = new QAction(tr("No action available..."), this);
+	qaEmpty->setEnabled(false);
 
 	createActions();
 	setupUi(this);
 	setupGui();
-
+	qtvUsers->setAccessibleName(tr("Channels and users"));
+	qteLog->setAccessibleName(tr("Activity log"));
+	qteChat->setAccessibleName(tr("Chat message"));
 	connect(qmUser, SIGNAL(aboutToShow()), this, SLOT(qmUser_aboutToShow()));
 	connect(qmChannel, SIGNAL(aboutToShow()), this, SLOT(qmChannel_aboutToShow()));
-	connect(qteChat, SIGNAL(entered(QString)), this, SLOT(sendChatbarMessage(QString)));
+	connect(qmListener, SIGNAL(aboutToShow()), this, SLOT(qmListener_aboutToShow()));
+	connect(qteChat, SIGNAL(entered(QString)), this, SLOT(sendChatbarText(QString)));
+	connect(qteChat, SIGNAL(pastedImage(QString)), this, SLOT(sendChatbarMessage(QString)));
 
 	// Tray
 	connect(qstiIcon, SIGNAL(messageClicked()), this, SLOT(showRaiseWindow()));
@@ -173,10 +187,6 @@ MainWindow::MainWindow(QWidget *p) : QMainWindow(p) {
 	setOnTop(g.s.aotbAlwaysOnTop == Settings::OnTopAlways ||
 	         (g.s.bMinimalView && g.s.aotbAlwaysOnTop == Settings::OnTopInMinimal) ||
 	         (!g.s.bMinimalView && g.s.aotbAlwaysOnTop == Settings::OnTopInNormal));
-
-#ifdef NO_UPDATE_CHECK
-	delete qaHelpVersionCheck;
-#endif
 }
 
 void MainWindow::createActions() {
@@ -210,11 +220,14 @@ void MainWindow::createActions() {
 	gsJoinChannel->setObjectName(QLatin1String("MetaChannel"));
 	gsJoinChannel->qsToolTip = tr("Use in conjunction with Whisper to.", "Global Shortcut");
 
+#ifdef USE_OVERLAY
 	gsToggleOverlay=new GlobalShortcut(this, idx++, tr("Toggle Overlay", "Global Shortcut"));
 	gsToggleOverlay->setObjectName(QLatin1String("ToggleOverlay"));
 	gsToggleOverlay->qsToolTip = tr("Toggle state of in-game overlay.", "Global Shortcut");
 	gsToggleOverlay->qsWhatsThis = tr("This will switch the states of the in-game overlay.", "Global Shortcut");
+
 	connect(gsToggleOverlay, SIGNAL(down(QVariant)), g.o, SLOT(toggleShow()));
+#endif
 
 	gsMinimal=new GlobalShortcut(this, idx++, tr("Toggle Minimal", "Global Shortcut"));
 	gsMinimal->setObjectName(QLatin1String("ToggleMinimal"));
@@ -388,6 +401,11 @@ void MainWindow::updateWindowTitle() {
 	} else {
 		title = tr("Mumble -- %1");
 	}
+
+	if (!g.windowTitlePostfix.isEmpty()) {
+		title += QString::fromLatin1(" | %1").arg(g.windowTitlePostfix);
+	}
+
 	setWindowTitle(title.arg(QLatin1String(MUMBLE_RELEASE)));
 }
 
@@ -457,6 +475,9 @@ void MainWindow::closeEvent(QCloseEvent *e) {
 	}
 	sh.reset();
 #endif
+	// Save ChannelListeners (has to be done before resetting g.uiSession
+	ChannelListener::saveToDB();
+
 	g.uiSession = 0;
 	g.pPermissions = ChanACL::None;
 
@@ -482,11 +503,13 @@ void MainWindow::closeEvent(QCloseEvent *e) {
 }
 
 void MainWindow::hideEvent(QHideEvent *e) {
+#ifdef USE_OVERLAY
 	if (g.ocIntercept) {
 		QMetaObject::invokeMethod(g.ocIntercept, "hideGui", Qt::QueuedConnection);
 		e->ignore();
 		return;
 	}
+#endif
 #ifndef Q_OS_MAC
 #ifdef Q_OS_UNIX
 	if (! qApp->activeModalWidget() && ! qApp->activePopupWidget())
@@ -707,14 +730,29 @@ void MainWindow::on_qtvUsers_customContextMenuRequested(const QPoint &mpos) {
 	ClientUser *p = pmModel->getUser(idx);
 
 	qpContextPosition = mpos;
-	if (p) {
+	if (pmModel->isChannelListener(idx)) {
+		// Have a separate context menu for listeners
+		QModelIndex parent = idx.parent();
+
+		if (parent.isValid()) {
+			// Find the channel in which the action was triggered and set it
+			// in order to be able to obtain it in the action itself
+			cContextChannel = pmModel->getChannel(parent);
+		}
 		cuContextUser.clear();
-		qmUser->exec(qtvUsers->mapToGlobal(mpos), qaUserMute);
+		qmListener->exec(qtvUsers->mapToGlobal(mpos), nullptr);
 		cuContextUser.clear();
+		cContextChannel.clear();
 	} else {
-		cContextChannel.clear();
-		qmChannel->exec(qtvUsers->mapToGlobal(mpos), NULL);
-		cContextChannel.clear();
+		if (p) {
+			cuContextUser.clear();
+			qmUser->exec(qtvUsers->mapToGlobal(mpos), nullptr);
+			cuContextUser.clear();
+		} else {
+			cContextChannel.clear();
+			qmChannel->exec(qtvUsers->mapToGlobal(mpos), NULL);
+			cContextChannel.clear();
+		}
 	}
 	qpContextPosition = QPoint();
 }
@@ -819,6 +857,8 @@ static void recreateServerHandler() {
 	g.mw->connect(sh.get(), SIGNAL(connected()), g.mw, SLOT(serverConnected()));
 	g.mw->connect(sh.get(), SIGNAL(disconnected(QAbstractSocket::SocketError, QString)), g.mw, SLOT(serverDisconnected(QAbstractSocket::SocketError, QString)));
 	g.mw->connect(sh.get(), SIGNAL(error(QAbstractSocket::SocketError, QString)), g.mw, SLOT(resolverError(QAbstractSocket::SocketError, QString)));
+
+	QObject::connect(sh.get(), &ServerHandler::disconnected, g.talkingUI, &TalkingUI::on_serverDisconnected);
 }
 
 void MainWindow::openUrl(const QUrl &url) {
@@ -1314,7 +1354,6 @@ void MainWindow::on_qaServerInformation_triggered() {
 	if (! c)
 		return;
 
-	CryptState &cs = c->csCrypt;
 	QSslCipher qsc = g.sh->qscCipher;
 
 	QString qsVersion=tr("<h2>Version</h2><p>Protocol %1</p>").arg(MumbleVersion::toString(g.sh->uiVersion));
@@ -1399,8 +1438,8 @@ void MainWindow::on_qaServerInformation_triggered() {
 		                              "<tr><th>%7</th><td>%11</td><td>%15</td></tr>"
 		                              "</table>")
 		          .arg(tr("UDP Statistics")).arg(tr("To Server")).arg(tr("From Server")).arg(tr("Good")).arg(tr("Late")).arg(tr("Lost")).arg(tr("Resync"))
-		          .arg(cs.uiRemoteGood).arg(cs.uiRemoteLate).arg(cs.uiRemoteLost).arg(cs.uiRemoteResync)
-		          .arg(cs.uiGood).arg(cs.uiLate).arg(cs.uiLost).arg(cs.uiResync);
+		          .arg(c->csCrypt->uiRemoteGood).arg(c->csCrypt->uiRemoteLate).arg(c->csCrypt->uiRemoteLost).arg(c->csCrypt->uiRemoteResync)
+		          .arg(c->csCrypt->uiGood).arg(c->csCrypt->uiLate).arg(c->csCrypt->uiLost).arg(c->csCrypt->uiResync);
 	}
 	qsAudio=tr("<h2>Audio bandwidth</h2><p>Maximum %1 kbit/s<br />Current %2 kbit/s<br />Codec: %3</p>").arg(g.iMaxBandwidth / 1000.0,0,'f',1).arg(g.iAudioBandwidth / 1000.0,0,'f',1).arg(currentCodec());
 
@@ -1466,9 +1505,17 @@ void MainWindow::qmUser_aboutToShow() {
 	cuContextUser = p;
 	qpContextPosition = QPoint();
 
-	bool self = p && (p->uiSession == g.uiSession);
+	const ClientUser *self = ClientUser::get(g.uiSession);
+	bool isSelf = p == self;
 
 	qmUser->clear();
+
+	if (self && p && !isSelf) {
+		qmUser->addAction(qaUserJoin);
+		qaUserJoin->setEnabled(self->cChannel != p->cChannel);
+
+		qmUser->addSeparator();
+	}
 
 	if (g.pPermissions & (ChanACL::Kick | ChanACL::Ban | ChanACL::Write))
 		qmUser->addAction(qaUserKick);
@@ -1480,9 +1527,11 @@ void MainWindow::qmUser_aboutToShow() {
 		qmUser->addAction(qaUserPrioritySpeaker);
 	qmUser->addAction(qaUserLocalMute);
 	qmUser->addAction(qaUserLocalIgnore);
+	if (g.s.bTTS)
+		qmUser->addAction(qaUserLocalIgnoreTTS);
 	qmUser->addAction(qaUserLocalVolume);
 
-	if (self)
+	if (isSelf)
 		qmUser->addAction(qaSelfComment);
 	else {
 		qmUser->addAction(qaUserCommentView);
@@ -1494,7 +1543,7 @@ void MainWindow::qmUser_aboutToShow() {
 	if (g.sh && g.sh->uiVersion >= 0x010202)
 		qmUser->addAction(qaUserInformation);
 
-	if (p && (p->iId < 0) && ! p->qsHash.isEmpty() && (g.pPermissions & ((self ? ChanACL::SelfRegister : ChanACL::Register) | ChanACL::Write))) {
+	if (p && (p->iId < 0) && ! p->qsHash.isEmpty() && (g.pPermissions & ((isSelf ? ChanACL::SelfRegister : ChanACL::Register) | ChanACL::Write))) {
 		qmUser->addSeparator();
 		qmUser->addAction(qaUserRegister);
 	}
@@ -1510,7 +1559,7 @@ void MainWindow::qmUser_aboutToShow() {
 		}
 	}
 
-	if (self) {
+	if (isSelf) {
 		qmUser->addSeparator();
 		qmUser->addAction(qaAudioMute);
 		qmUser->addAction(qaAudioDeaf);
@@ -1539,18 +1588,26 @@ void MainWindow::qmUser_aboutToShow() {
 		qaUserLocalMute->setEnabled(false);
 		qaUserLocalVolume->setEnabled(false);
 		qaUserLocalIgnore->setEnabled(false);
+		qaUserLocalIgnoreTTS->setEnabled(false);
 		qaUserCommentReset->setEnabled(false);
 		qaUserTextureReset->setEnabled(false);
 		qaUserCommentView->setEnabled(false);
 	} else {
-		qaUserKick->setEnabled(! self);
-		qaUserBan->setEnabled(! self);
+		qaUserKick->setEnabled(! isSelf);
+		qaUserBan->setEnabled(! isSelf);
 		qaUserTextMessage->setEnabled(true);
-		qaUserLocalMute->setEnabled(! self);
-		qaUserLocalVolume->setEnabled(! self);
-		qaUserLocalIgnore->setEnabled(! self);
-		qaUserCommentReset->setEnabled(! p->qbaCommentHash.isEmpty() && (g.pPermissions & (ChanACL::Move | ChanACL::Write)));
-		qaUserTextureReset->setEnabled(! p->qbaTextureHash.isEmpty() && (g.pPermissions & (ChanACL::Move | ChanACL::Write)));
+		qaUserLocalMute->setEnabled(! isSelf);
+		qaUserLocalVolume->setEnabled(! isSelf);
+		qaUserLocalIgnore->setEnabled(! isSelf);
+		qaUserLocalIgnoreTTS->setEnabled(! isSelf);
+		// If the server's version is less than 1.4.0 it won't support the new permission to reset a comment/avatar, so fall back to the old method
+		if (g.sh->uiVersion < 0x010400) {
+			qaUserCommentReset->setEnabled(! p->qbaCommentHash.isEmpty() && (g.pPermissions & (ChanACL::Move | ChanACL::Write)));
+			qaUserTextureReset->setEnabled(! p->qbaTextureHash.isEmpty() && (g.pPermissions & (ChanACL::Move | ChanACL::Write)));
+		} else {
+			qaUserCommentReset->setEnabled(! p->qbaCommentHash.isEmpty() && (g.pPermissions & (ChanACL::ResetUserContent | ChanACL::Write)));
+			qaUserTextureReset->setEnabled(! p->qbaTextureHash.isEmpty() && (g.pPermissions & (ChanACL::ResetUserContent | ChanACL::Write)));
+		}
 		qaUserCommentView->setEnabled(! p->qbaCommentHash.isEmpty());
 
 		qaUserMute->setChecked(p->bMute || p->bSuppress);
@@ -1558,8 +1615,43 @@ void MainWindow::qmUser_aboutToShow() {
 		qaUserPrioritySpeaker->setChecked(p->bPrioritySpeaker);
 		qaUserLocalMute->setChecked(p->bLocalMute);
 		qaUserLocalIgnore->setChecked(p->bLocalIgnore);
+		qaUserLocalIgnoreTTS->setChecked(p->bLocalIgnoreTTS);
 	}
 	updateMenuPermissions();
+}
+
+void MainWindow::qmListener_aboutToShow() {
+	ClientUser *p = nullptr;
+	if (g.uiSession != 0) {
+		QModelIndex idx;
+		if (! qpContextPosition.isNull())
+			idx = qtvUsers->indexAt(qpContextPosition);
+
+		if (! idx.isValid())
+			idx = qtvUsers->currentIndex();
+
+		p = pmModel->getUser(idx);
+
+		if (cuContextUser)
+			p = cuContextUser.data();
+	}
+
+	cuContextUser = p;
+	qpContextPosition = QPoint();
+
+	bool self = p && (p->uiSession == g.uiSession);
+
+	qmListener->clear();
+
+	if (self) {
+		qmListener->addAction(qaListenerLocalVolume);
+		if (cContextChannel) {
+			qmListener->addAction(qaChannelListen);
+			qaChannelListen->setChecked(ChannelListener::isListening(g.uiSession, cContextChannel->iId));
+		}
+	} else {
+		qmListener->addAction(qaEmpty);
+	}
 }
 
 void MainWindow::on_qaUserMute_triggered() {
@@ -1602,6 +1694,18 @@ void MainWindow::on_qaUserLocalIgnore_triggered() {
 	p->setLocalIgnore(ignored);
 	if (! p->qsHash.isEmpty())
 		g.db->setLocalIgnored(p->qsHash, ignored);
+}
+
+void MainWindow::on_qaUserLocalIgnoreTTS_triggered() {
+	ClientUser *p = getContextMenuUser();
+	if (!p)
+		return;
+
+	bool ignoredTTS = qaUserLocalIgnoreTTS->isChecked();
+
+	p->setLocalIgnoreTTS(ignoredTTS);
+	if (! p->qsHash.isEmpty())
+		g.db->setLocalIgnoredTTS(p->qsHash, ignoredTTS);
 }
 
 void MainWindow::on_qaUserLocalVolume_triggered() {
@@ -1839,29 +1943,32 @@ void MainWindow::on_qaQuit_triggered() {
 	this->close();
 }
 
-void MainWindow::sendChatbarMessage(QString qsText) {
+void MainWindow::sendChatbarText(QString qsText) {
+	qsText = qsText.toHtmlEscaped();
+	qsText = Markdown::markdownToHTML(qsText);
+	sendChatbarMessage(qsText);
+
+	qteChat->clear();
+}
+
+void MainWindow::sendChatbarMessage(QString qsMessage) {
 	if (g.uiSession == 0) return; // Check if text & connection is available
 
 	ClientUser *p = pmModel->getUser(qtvUsers->currentIndex());
 	Channel *c = pmModel->getChannel(qtvUsers->currentIndex());
-
-	qsText = qsText.toHtmlEscaped();
-	qsText = TextMessage::autoFormat(qsText);
 
 	if (!g.s.bChatBarUseSelection || p == NULL || p->uiSession == g.uiSession) {
 		// Channel message
 		if (!g.s.bChatBarUseSelection || c == NULL) // If no channel selected fallback to current one
 			c = ClientUser::get(g.uiSession)->cChannel;
 
-		g.sh->sendChannelTextMessage(c->iId, qsText, false);
-		g.l->log(Log::TextMessage, tr("To %1: %2").arg(Log::formatChannel(c), qsText), tr("Message to channel %1").arg(c->qsName), true);
+		g.sh->sendChannelTextMessage(c->iId, qsMessage, false);
+		g.l->log(Log::TextMessage, tr("To %1: %2").arg(Log::formatChannel(c), qsMessage), tr("Message to channel %1").arg(c->qsName), true);
 	} else {
 		// User message
-		g.sh->sendUserTextMessage(p->uiSession, qsText);
-		g.l->log(Log::TextMessage, tr("To %1: %2").arg(Log::formatClientUser(p, Log::Target), qsText), tr("Message to %1").arg(p->qsName), true);
+		g.sh->sendUserTextMessage(p->uiSession, qsMessage);
+		g.l->log(Log::TextMessage, tr("To %1: %2").arg(Log::formatClientUser(p, Log::Target), qsMessage), tr("Message to %1").arg(p->qsName), true);
 	}
-
-	qteChat->clear();
 }
 
 /**
@@ -1900,6 +2007,10 @@ void MainWindow::on_qmConfig_aboutToShow() {
 	qmConfig->addAction(qaAudioTTS);
 	qmConfig->addSeparator();
 	qmConfig->addAction(qaConfigMinimal);
+
+	qaTalkingUIToggle->setChecked(g.talkingUI && g.talkingUI->isVisible());
+
+	qmConfig->addAction(qaTalkingUIToggle);
 	if (g.s.bMinimalView)
 		qmConfig->addAction(qaConfigHideFrame);
 }
@@ -1927,8 +2038,18 @@ void MainWindow::qmChannel_aboutToShow() {
 
 	if (c && c->iId != ClientUser::get(g.uiSession)->cChannel->iId) {
 		qmChannel->addAction(qaChannelJoin);
+
 		qmChannel->addSeparator();
 	}
+
+	if (c && g.sh && g.sh->uiVersion >= 0x010400) {
+		// If the server's version is less than 1.4, the listening feature is not supported yet
+		// and thus it doesn't make sense to show the action for it
+		qmChannel->addAction(qaChannelListen);
+		qaChannelListen->setChecked(ChannelListener::isListening(g.uiSession, c->iId));
+	}
+
+	qmChannel->addSeparator();
 
 	qmChannel->addAction(qaChannelAdd);
 	qmChannel->addAction(qaChannelACL);
@@ -2005,6 +2126,30 @@ void MainWindow::on_qaChannelJoin_triggered() {
 
 	if (c) {
 		g.sh->joinChannel(g.uiSession, c->iId);
+	}
+}
+
+void MainWindow::on_qaUserJoin_triggered() {
+	const ClientUser *user = getContextMenuUser();
+
+	if (user) {
+		const Channel *channel = user->cChannel;
+
+		if (channel) {
+			g.sh->joinChannel(g.uiSession, channel->iId);
+		}
+	}
+}
+
+void MainWindow::on_qaChannelListen_triggered() {
+	Channel *c = getContextMenuChannel();
+
+	if (c) {
+		if (qaChannelListen->isChecked()) {
+			g.sh->startListeningToChannel(c->iId);
+		} else {
+			g.sh->stopListeningToChannel(c->iId);
+		}
 	}
 }
 
@@ -2146,6 +2291,18 @@ void MainWindow::on_qaChannelCopyURL_triggered() {
 	}
 
 	QApplication::clipboard()->setMimeData(ServerItem::toMimeData(c->qsName, host, port, channel), QClipboard::Clipboard);
+}
+
+void MainWindow::on_qaListenerLocalVolume_triggered() {
+	Channel *channel = getContextMenuChannel();
+	ClientUser *user = getContextMenuUser();
+
+	if (!channel || !user) {
+		return;
+	}
+
+	ListenerLocalVolumeDialog dialog(user, channel);	
+	dialog.exec();
 }
 
 /**
@@ -2373,7 +2530,9 @@ void MainWindow::on_qaAudioUnlink_triggered() {
 }
 
 void MainWindow::on_qaConfigDialog_triggered() {
-	QDialog *dlg = new ConfigDialog(this);
+	ConfigDialog *dlg = new ConfigDialog(this);
+
+	QObject::connect(dlg, &ConfigDialog::settingsAccepted, g.talkingUI, &TalkingUI::on_settingsChanged);
 
 	if (dlg->exec() == QDialog::Accepted) {
 		setupView(false);
@@ -2552,7 +2711,28 @@ void MainWindow::updateTarget() {
 			ShortcutTarget nt;
 			center = center || st.bForceCenter;
 			nt.bUsers = st.bUsers;
-			if (st.bUsers) {
+			nt.bCurrentSelection = st.bCurrentSelection;
+
+			if (nt.bCurrentSelection) {
+				Channel *c = pmModel->getSelectedChannel();
+				if (c) {
+					nt.bUsers = false;
+					nt.iChannel = c->iId;
+					nt.bLinks = st.bLinks;
+					nt.bChildren = st.bChildren;
+
+					ql << nt;
+				} else {
+					ClientUser *user = pmModel->getSelectedUser();
+
+					if (user) {
+						nt.bUsers = true;
+						nt.qlSessions << user->uiSession;
+
+						ql << nt;
+					}
+				}
+			} else if (st.bUsers) {
 				foreach(const QString &hash, st.qlUsers) {
 					ClientUser *p = pmModel->getUser(hash);
 					if (p)
@@ -2578,22 +2758,32 @@ void MainWindow::updateTarget() {
 
 			int idx = qmTargets.value(ql);
 			if (idx == 0) {
+				// An idx of 0 means that we don't have a mapping for this shortcut yet
+				// Thus we'll register it here
 				QMap<int, int> qm;
 				QMap<int, int>::const_iterator i;
+				// We reverse the qmTargetsUse map into qm so that each key becomes a value and vice versa
 				for (i=qmTargetUse.constBegin(); i != qmTargetUse.constEnd(); ++i) {
 					qm.insert(i.value(), i.key());
 				}
 
+				// The reversal and the promise that when iterating over a QMap, the keys will appear sorted
+				// leads to us now being able to get the next target ID as the value of the first entry in
+				// the map.
 				i = qm.constBegin();
 				idx = i.value();
 
 
 
+				// Sets up a VoiceTarget (which is identified by the targetID idx) on the server for the given set
+				// of ShortcutTargets
 				MumbleProto::VoiceTarget mpvt;
 				mpvt.set_id(idx);
 
 				foreach(const ShortcutTarget &st, ql) {
 					MumbleProto::VoiceTarget_Target *t = mpvt.add_targets();
+					// st.bCurrentSelection has been taken care of at this point already (if it was set) so
+					// we don't have to check for that here.
 					if (st.bUsers) {
 						foreach(unsigned int uisession, st.qlSessions)
 							t->add_session(uisession);
@@ -2609,15 +2799,25 @@ void MainWindow::updateTarget() {
 				}
 				g.sh->sendMessage(mpvt);
 
+				// Store a mapping of the list of ShortcutTargets and the used targetID
 				qmTargets.insert(ql, idx);
 
+				// Advance the iteration of qm (which contains the reverse mapping of qmTargetUse) by two.
+				// Note that qmTargetUse is first populated in Messages.cpp so we will not overflow the map
+				// by this.
 				++i;
 				++i;
+
+				// Get the target ID for the targetID after next
 				int oldidx = i.value();
 				if (oldidx) {
 					QHash<QList<ShortcutTarget>, int>::iterator mi;
 					for (mi = qmTargets.begin(); mi != qmTargets.end(); ++mi) {
 						if (mi.value() == oldidx) {
+							// If we have used the targetID after next before, we clear the VoiceTarget for that
+							// targetID on the server in order to be able to reuse that ID once we need it. We do
+							// it 2 steps in advance as to not run into timing problems where the server might
+							// receive this clearing message too late for us to recycle the ID.
 							qmTargets.erase(mi);
 
 							mpvt.Clear();
@@ -2629,6 +2829,14 @@ void MainWindow::updateTarget() {
 					}
 				}
 			}
+
+			// This is where the magic happens. We replace the old value the used targetID was mapped to with
+			// iTargetCounter. iTargetCounter is guaranteed to be bigger than any number a targetID is currently
+			// mapped to in this map. This causes the mapping for the most recently used targetID to appear last
+			// in the qm map the next time this function gets called. This causes targetIDs to be sorted according
+			// to the time they have been assigned for the last time so that the targetID that comes last in qm will
+			// be the one that has been assigned most recently. This trick turns qmTargetUse (or rather qm) into
+			// something similar to a RingBuffer inside this method.
 			qmTargetUse.insert(idx, iTargetCounter);
 			g.bCenterPosition = center;
 			g.iTarget = idx;
@@ -2876,6 +3084,12 @@ void MainWindow::serverConnected() {
 }
 
 void MainWindow::serverDisconnected(QAbstractSocket::SocketError err, QString reason) {
+	// Note that the saving of the ChannelListeners has to be done, before resetting g.uiSession
+	// Save ChannelListeners
+	ChannelListener::saveToDB();
+	// clear ChannelListener
+	ChannelListener::clear();
+
 	g.uiSession = 0;
 	g.pPermissions = ChanACL::None;
 	g.bAttenuateOthers = false;
@@ -3005,9 +3219,14 @@ void MainWindow::serverDisconnected(QAbstractSocket::SocketError err, QString re
 			g.l->log(Log::ServerDisconnected, tr("Disconnected from server."));
 		}
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
+		// Qt 5.15 introduced a default constructor that initializes the flags to be set to no flags
+		Qt::WindowFlags wf;
+#elif defined(Q_OS_MAC)
+		Qt::WindowFlags wf = Qt::Sheet;
+#else
+		// Before Qt 5.15 we have emulate the default constructor by assigning a literal zero
 		Qt::WindowFlags wf = 0;
-#ifdef Q_OS_MAC
-		wf = Qt::Sheet;
 #endif
 
 		bool matched = true;
@@ -3128,6 +3347,17 @@ void MainWindow::on_Icon_activated(QSystemTrayIcon::ActivationReason reason) {
 	}
 }
 
+void MainWindow::on_qaTalkingUIToggle_triggered() {
+	if (!g.talkingUI) {
+		qCritical("MainWindow: Attempting to show Talking UI before it has been created!");
+		return;
+	}
+
+	g.talkingUI->setVisible(!g.talkingUI->isVisible());
+
+	g.s.bShowTalkingUI = g.talkingUI->isVisible();
+}
+
 /**
  * This function updates the qteChat bar default text according to
  * the selected user/channel in the users treeview.
@@ -3200,7 +3430,7 @@ void MainWindow::customEvent(QEvent *evt) {
 
 void MainWindow::on_qteLog_anchorClicked(const QUrl &url) {
 	if (!handleSpecialContextMenu(url, QCursor::pos(), true)) {
-#ifdef Q_OS_MAC
+#if defined(Q_OS_MAC) && defined(USE_OVERLAY)
 		// Clicking a link can cause the user's default browser to pop up while
 		// we're intercepting all events. This can be very confusing (because
 		// the user can't click on anything before they dismiss the overlay
@@ -3304,4 +3534,3 @@ void MainWindow::destroyUserInformation() {
 		}
 	}
 }
-

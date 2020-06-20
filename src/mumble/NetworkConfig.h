@@ -18,8 +18,11 @@ class NetworkConfig : public ConfigWidget, Ui::NetworkConfig {
 		Q_OBJECT
 		Q_DISABLE_COPY(NetworkConfig)
 	public:
+		/// The unique name of this ConfigWidget
+		static const QString name;
 		NetworkConfig(Settings &st);
 		virtual QString title() const Q_DECL_OVERRIDE;
+		virtual const QString &getName() const Q_DECL_OVERRIDE;
 		virtual QIcon icon() const Q_DECL_OVERRIDE;
 		static void SetupProxy();
 		static bool TcpModeEnabled();
@@ -29,6 +32,9 @@ class NetworkConfig : public ConfigWidget, Ui::NetworkConfig {
 		void load(const Settings &r) Q_DECL_OVERRIDE;
 
 		void on_qcbType_currentIndexChanged(int v);
+#ifdef NO_UPDATE_CHECK
+		void on_qcbAutoUpdate_stateChanged(int state);
+#endif
 };
 
 namespace Network {

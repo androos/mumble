@@ -26,6 +26,64 @@ ChanACL::ChanACL(Channel *chan) : QObject(chan) {
 		c->qlACL << this;
 }
 
+ChanACL::operator QString() const {
+	QString aclString;
+	bool isFirstEntry = true;
+	// Iterate over all flags and assume none of the important ones (all other than Cached and All)
+	// have a value > 2^32
+	for (int i = 0; i < 32; i++) {
+		int currentPermInt = 1 << i;
+		// If we have a name for the permission, we know it exists.
+		// Note that we won't reach 0 with this tactic but we don't care about the None
+		// permission anyways.
+		QString name = permName(static_cast<Perm>(currentPermInt));
+
+		if (!name.isEmpty()) {
+			if (!((pAllow & currentPermInt) || (pDeny & currentPermInt))) {
+				// The current permission is left unchanged by this ACL -> Don't include it in the
+				// string representation
+				continue;
+			}
+
+			if (!isFirstEntry) {
+				aclString += QLatin1String(", ");
+			}
+
+			isFirstEntry = false;
+
+			aclString += QString::fromLatin1("\"%1\": ").arg(name);
+
+			if ((pAllow & currentPermInt) && (pDeny & currentPermInt)) {
+				// The permissions is allowed and denied. In the current implementation this should
+				// result in i tbeing denied, but for printing purposes we don't make assumptions about
+				// the handling of this in the implementation.
+				aclString += QLatin1String("Allowed && Denied");
+			} else {
+				if (pAllow & currentPermInt) {
+					aclString += QLatin1String("Allowed");
+				} else {
+					aclString += QLatin1String("Denied");
+				}
+			}
+		}
+	}
+
+	if (!aclString.isEmpty()) {
+		// Alos include info about affected user and/or group
+		if (!qsGroup.isEmpty() && iUserId >= 0) {
+			// both group and user-id are set
+			return QString::fromLatin1("ACL for group \"%1\" and user with ID %2: %3").arg(
+					qsGroup).arg(iUserId).arg(aclString);
+		} else if (!qsGroup.isEmpty()) {
+			return QString::fromLatin1("ACL for group \"%1\": %2").arg(qsGroup).arg(aclString);
+		} else if (iUserId >= 0) {
+			return QString::fromLatin1("ACL for user with ID %1: %2").arg(iUserId).arg(qsGroup);
+		}
+	}
+
+	return aclString;
+}
+
 // Check permissions.
 // This will always return true for the superuser,
 // and will return false if a user isn't allowed to
@@ -46,7 +104,13 @@ QFlags<ChanACL::Perm> ChanACL::effectivePermissions(ServerUser *p, Channel *chan
 		return static_cast<Permissions>(All &~ (Speak|Whisper));
 	}
 
+#if QT_VERSION >= QT_VERSION_CHECK(5,15,0)
+	// Qt 5.15 introduced a default constructor that initializes the flags to be set to no flags
+	Permissions granted;
+#else
+	// Before Qt 5.15 we have emulate the default constructor by assigning a literal zero
 	Permissions granted = 0;
+#endif
 
 	if (cache) {
 		QHash<Channel *, Permissions> *h = cache->value(p);
@@ -67,7 +131,7 @@ QFlags<ChanACL::Perm> ChanACL::effectivePermissions(ServerUser *p, Channel *chan
 	}
 
 	// Default permissions
-	Permissions def = Traverse | Enter | Speak | Whisper | TextMessage;
+	Permissions def = Traverse | Enter | Speak | Whisper | TextMessage | Listen;
 
 	granted = def;
 
@@ -97,13 +161,15 @@ QFlags<ChanACL::Perm> ChanACL::effectivePermissions(ServerUser *p, Channel *chan
 						granted |= Kick;
 					if (acl->pAllow & Ban)
 						granted |= Ban;
+					if (acl->pAllow & ResetUserContent)
+						granted |= ResetUserContent;
 					if (acl->pAllow & Register)
 						granted |= Register;
 					if (acl->pAllow & SelfRegister)
 						granted |= SelfRegister;
 				}
 				if ((ch==chan && acl->bApplyHere) || (ch!=chan && acl->bApplySubs)) {
-					granted |= (acl->pAllow & ~(Kick|Ban|Register|SelfRegister|Cached));
+					granted |= (acl->pAllow & ~(Kick|Ban|ResetUserContent|Register|SelfRegister|Cached));
 					granted &= ~acl->pDeny;
 				}
 			}
@@ -115,9 +181,9 @@ QFlags<ChanACL::Perm> ChanACL::effectivePermissions(ServerUser *p, Channel *chan
 	}
 
 	if (granted & Write) {
-		granted |= Traverse|Enter|MuteDeafen|Move|MakeChannel|LinkChannel|TextMessage|MakeTempChannel;
+		granted |= Traverse|Enter|MuteDeafen|Move|MakeChannel|LinkChannel|TextMessage|MakeTempChannel|Listen;
 		if (chan->iId == 0)
-			granted |= Kick|Ban|Register|SelfRegister;
+			granted |= Kick|Ban|ResetUserContent|Register|SelfRegister;
 	}
 
 	if (cache) {
@@ -178,10 +244,14 @@ QString ChanACL::whatsThis(Perm p) {
 			return tr("This represents the permission to forcibly remove users from the server.");
 		case Ban:
 			return tr("This represents the permission to permanently remove users from the server.");
+		case ResetUserContent:
+			return tr("This represents the permission to reset the comment or avatar of a user.");
 		case Register:
 			return tr("This represents the permission to register and unregister users on the server.");
 		case SelfRegister:
 			return tr("This represents the permission to register oneself on the server.");
+		case Listen:
+			return tr("This represents the permission to use the listen-feature allowing to listen to a channel without being in it.");
 		default:
 			break;
 	}
@@ -229,10 +299,14 @@ QString ChanACL::permName(Perm p) {
 			return tr("Kick");
 		case Ban:
 			return tr("Ban");
+		case ResetUserContent:
+			return tr("Reset User Content");
 		case Register:
 			return tr("Register User");
 		case SelfRegister:
 			return tr("Register Self");
+		case Listen:
+			return tr("Listen");
 		default:
 			break;
 	}

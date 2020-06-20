@@ -16,6 +16,8 @@
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
 
+const QString LCDConfig::name = QLatin1String("LCDConfig");
+
 QList<LCDEngineNew> *LCDEngineRegistrar::qlInitializers;
 
 LCDEngineRegistrar::LCDEngineRegistrar(LCDEngineNew cons) {
@@ -80,7 +82,10 @@ static LCDDeviceManager devmgr;
 
 LCDConfig::LCDConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
-
+	qtwDevices->setAccessibleName(tr("Devices"));
+	qsMinColWidth->setAccessibleName(tr("Minimum column width"));
+	qsSplitterWidth->setAccessibleName(tr("Splitter width"));
+	
 	QTreeWidgetItem *qtwi;
 	foreach(LCDDevice *d, devmgr.qlDevices) {
 		qtwi = new QTreeWidgetItem(qtwDevices);
@@ -102,6 +107,10 @@ LCDConfig::LCDConfig(Settings &st) : ConfigWidget(st) {
 
 QString LCDConfig::title() const {
 	return tr("LCD");
+}
+
+const QString &LCDConfig::getName() const {
+	return LCDConfig::name;
 }
 
 QIcon LCDConfig::icon() const {

@@ -29,6 +29,8 @@
 // We define a global macro called 'g'. This can lead to issues when included code uses 'g' as a type or parameter name (like protobuf 3.7 does). As such, for now, we have to make this our last include.
 #include "Global.h"
 
+const QString LogConfig::name = QLatin1String("LogConfig");
+
 static ConfigWidget *LogConfigDialogNew(Settings &st) {
 	return new LogConfig(st);
 }
@@ -37,7 +39,12 @@ static ConfigRegistrar registrar(4000, LogConfigDialogNew);
 
 LogConfig::LogConfig(Settings &st) : ConfigWidget(st) {
 	setupUi(this);
-
+	qtwMessages->setAccessibleName(tr("Log messages"));
+	qsVolume->setAccessibleName(tr("TTS engine volume"));
+	qsbThreshold->setAccessibleName(tr("Length threshold"));
+	qsbMaxBlocks->setAccessibleName(tr("Maximum chat length"));
+	qsbChatMessageMargins->setAccessibleName(tr("Chat message margins"));
+	
 #ifdef USE_NO_TTS
 	qgbTTS->setDisabled(true);
 #endif
@@ -85,6 +92,10 @@ QString LogConfig::title() const {
 	return windowTitle();
 }
 
+const QString &LogConfig::getName() const {
+	return LogConfig::name;
+}
+
 QIcon LogConfig::icon() const {
 	return QIcon(QLatin1String("skin:config_msgs.png"));
 }
@@ -108,6 +119,7 @@ void LogConfig::load(const Settings &r) {
 
 	qsbMaxBlocks->setValue(r.iMaxLogBlocks);
 	qcb24HourClock->setChecked(r.bLog24HourClock);
+	qsbChatMessageMargins->setValue(r.iChatMessageMargins);
 
 #ifdef USE_NO_TTS
 	qtwMessages->hideColumn(ColTTS);
@@ -145,6 +157,7 @@ void LogConfig::save() const {
 	}
 	s.iMaxLogBlocks = qsbMaxBlocks->value();
 	s.bLog24HourClock = qcb24HourClock->isChecked();
+	s.iChatMessageMargins = qsbChatMessageMargins->value();
 
 #ifndef USE_NO_TTS
 	s.iTTSVolume=qsVolume->value();
@@ -224,6 +237,7 @@ const Log::MsgType Log::msgOrder[] = {
 	DebugInfo, CriticalError, Warning, Information,
 	ServerConnected, ServerDisconnected,
 	UserJoin, UserLeave,
+	ChannelListeningAdd, ChannelListeningRemove,
 	Recording,
 	YouKicked, UserKicked,
 	UserRenamed,
@@ -265,7 +279,9 @@ const char *Log::msgNames[] = {
 	QT_TRANSLATE_NOOP("Log", "You joined channel (moved)"),
 	QT_TRANSLATE_NOOP("Log", "User connected and entered channel"),
 	QT_TRANSLATE_NOOP("Log", "User left channel and disconnected"),
-	QT_TRANSLATE_NOOP("Log", "Private text message")
+	QT_TRANSLATE_NOOP("Log", "Private text message"),
+	QT_TRANSLATE_NOOP("Log", "User started listening to channel"),
+	QT_TRANSLATE_NOOP("Log", "User stopped listening to channel")
 };
 
 QString Log::msgName(MsgType t) const {
@@ -308,15 +324,15 @@ QString Log::formatChannel(::Channel *c) {
 	return QString::fromLatin1("<a href='channelid://%1/%3' class='log-channel'>%2</a>").arg(c->iId).arg(c->qsName.toHtmlEscaped()).arg(QString::fromLatin1(g.sh->qbaDigest.toBase64()));
 }
 
-void Log::logOrDefer(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS) {
+void Log::logOrDefer(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS, bool ignoreTTS) {
 	if (g.l) {
 		// log directly as it seems the log-UI has been set-up already
-		g.l->log(mt, console, terse, ownMessage, overrideTTS);
+		g.l->log(mt, console, terse, ownMessage, overrideTTS, ignoreTTS);
 	} else {
 		// defer the log
 		QMutexLocker mLock(&Log::qmDeferredLogs);
 
-		qvDeferredLogs.append(LogMessage(mt, console, terse, ownMessage, overrideTTS));
+		qvDeferredLogs.append(LogMessage(mt, console, terse, ownMessage, overrideTTS, ignoreTTS));
 	}
 }
 
@@ -478,7 +494,7 @@ QString Log::validHtml(const QString &html, QTextCursor *tc) {
 	}
 }
 
-void Log::log(MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS) {
+void Log::log(MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS, bool ignoreTTS) {
 	QDateTime dt = QDateTime::currentDateTime();
 
 	int ignore = qmIgnore.value(mt);
@@ -496,6 +512,16 @@ void Log::log(MsgType mt, const QString &console, const QString &terse, bool own
 	if ((flags & Settings::LogConsole)) {
 		QTextCursor tc = g.mw->qteLog->textCursor();
 
+		// We copy the value from the settings in order to make sure that
+		// we use the same margin everywhere while in this method (even if
+		// the setting might change in that time).
+		const int msgMargin = g.s.iChatMessageMargins;
+
+		QTextBlockFormat format = tc.blockFormat();
+		format.setTopMargin(msgMargin);
+		format.setBottomMargin(msgMargin);
+		tc.setBlockFormat(format);
+
 		LogTextBrowser *tlog = g.mw->qteLog;
 		const int oldscrollvalue = tlog->getLogScroll();
 		const bool scroll = (oldscrollvalue == tlog->getLogScrollMaximum());
@@ -509,13 +535,24 @@ void Log::log(MsgType mt, const QString &console, const QString &terse, bool own
 			tc.movePosition(QTextCursor::End);
 		}
 
-		if (plain.contains(QRegExp(QLatin1String("[\\r\\n]")))) {
+		// Convert CRLF to unix-style LF and old mac-style LF (single \r) to unix-style as well
+		QString fixedNLPlain = plain.replace(QLatin1String("\r\n"), QLatin1String("\n")).replace(QLatin1String("\r"), QLatin1String("\n"));
+
+		if (fixedNLPlain.contains(QRegExp(QLatin1String("\\n[ \\t]*$")))) {
+			// If the message ends with one or more blank lines (or lines only containing whitespace)
+			// paint a border around the message to make clear that it contains invisible parts.
+			// The beginning of the message is clear anyway (the date and potentially the "To XY" part)
+			// so we don't have to care about that.
 			QTextFrameFormat qttf;
 			qttf.setBorder(1);
 			qttf.setPadding(2);
-			qttf.setBorderStyle(QTextFrameFormat::BorderStyle_Solid);
+			qttf.setMargin(msgMargin);
+			qttf.setBorderStyle(QTextFrameFormat::BorderStyle_Dashed);
 			tc.insertFrame(qttf);
-		} else if (! g.mw->qteLog->document()->isEmpty()) {
+		} else if (!tc.block().text().isEmpty()) {
+			// Only insert a block if the current block is not empty. It may be empty because
+			// it is the default block of an empty document. Another cause might be that apparently
+			// a new empty block is automatically inserted after a frame.
 			tc.insertBlock();
 		}
 
@@ -564,7 +601,7 @@ void Log::log(MsgType mt, const QString &console, const QString &terse, bool own
 	}
 
 	// Message notification with Text-To-Speech
-	if (g.s.bDeaf || !g.s.bTTS || !(flags & Settings::LogTTS)) {
+	if (g.s.bDeaf || !g.s.bTTS || !(flags & Settings::LogTTS) || ignoreTTS) {
 		return;
 	}
 
@@ -621,7 +658,7 @@ void Log::processDeferredLogs() {
 	while (!qvDeferredLogs.isEmpty()) {
 		LogMessage msg = qvDeferredLogs.takeFirst();
 
-		log(msg.mt, msg.console, msg.terse, msg.ownMessage, msg.overrideTTS);
+		log(msg.mt, msg.console, msg.terse, msg.ownMessage, msg.overrideTTS, msg.ignoreTTS);
 	}
 }
 
@@ -645,8 +682,8 @@ void Log::postQtNotification(MsgType mt, const QString &plain) {
 	}
 }
 
-LogMessage::LogMessage(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS) : mt(mt), console(console),
-	terse(terse), ownMessage(ownMessage), overrideTTS(overrideTTS) {
+LogMessage::LogMessage(Log::MsgType mt, const QString &console, const QString &terse, bool ownMessage, const QString &overrideTTS, bool ignoreTTS) : mt(mt), console(console),
+	terse(terse), ownMessage(ownMessage), overrideTTS(overrideTTS), ignoreTTS(ignoreTTS) {
 }
 
 LogDocument::LogDocument(QObject *p)

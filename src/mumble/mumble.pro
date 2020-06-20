@@ -61,7 +61,7 @@ CONFIG(static) {
   CONFIG += static_qt_plugins
 }
 
-QT  *= network sql xml svg
+QT  *= network sql xml svg concurrent
 isEqual(QT_MAJOR_VERSION, 5) {
   QT *= widgets
 
@@ -103,8 +103,6 @@ HEADERS *= BanEditor.h \
     Plugins.h \
     PTTButtonWidget.h \
     LookConfig.h \
-    Overlay.h \
-    OverlayText.h \
     SharedMemory.h \
     AudioWizard.h \
     ViewCert.h \
@@ -117,6 +115,7 @@ HEADERS *= BanEditor.h \
     UserEdit.h \
     UserListModel.h \
     UserLocalVolumeDialog.h \
+	ListenerLocalVolumeDialog.h \
     Tokens.h \
     UserView.h \
     RichTextEditor.h \
@@ -126,23 +125,17 @@ HEADERS *= BanEditor.h \
     VoiceRecorderDialog.h \
     WebFetch.h \
     ../SignalCurry.h \
-    OverlayClient.h \
-    OverlayUser.h \
-    OverlayUserGroup.h \
-    OverlayConfig.h \
-    OverlayEditor.h \
-    OverlayEditorScene.h \
     MumbleApplication.h \
     ApplicationPalette.h \
     ThemeInfo.h \
     Themes.h \
-    OverlayPositionableItem.h \
     widgets/MUComboBox.h \
     DeveloperConsole.h \
-    PathListWidget.h \
     XMLTools.h \
     Screen.h \
-    SvgIcon.h
+    SvgIcon.h \
+    Markdown.h \
+    TalkingUI.h
 
 SOURCES *= BanEditor.cpp \
     ACLEditor.cpp \
@@ -172,14 +165,6 @@ SOURCES *= BanEditor.cpp \
     Plugins.cpp \
     PTTButtonWidget.cpp \
     LookConfig.cpp \
-    OverlayClient.cpp \
-    OverlayConfig.cpp \
-    OverlayEditor.cpp \
-    OverlayEditorScene.cpp \
-    OverlayUser.cpp \
-    OverlayUserGroup.cpp \
-    Overlay.cpp \
-    OverlayText.cpp \
     SharedMemory.cpp \
     AudioWizard.cpp \
     ViewCert.cpp \
@@ -194,6 +179,7 @@ SOURCES *= BanEditor.cpp \
     UserEdit.cpp \
     UserListModel.cpp \
     UserLocalVolumeDialog.cpp \
+	ListenerLocalVolumeDialog.cpp \
     Tokens.cpp \
     UserView.cpp \
     RichTextEditor.cpp \
@@ -206,13 +192,43 @@ SOURCES *= BanEditor.cpp \
     ../../3rdparty/smallft-src/smallft.cpp \
     ThemeInfo.cpp \
     Themes.cpp \
-    OverlayPositionableItem.cpp \
     widgets/MUComboBox.cpp \
     DeveloperConsole.cpp \
-    PathListWidget.cpp \
     XMLTools.cpp \
     Screen.cpp \
-    SvgIcon.cpp
+    SvgIcon.cpp \
+    Markdown.cpp \
+    TalkingUI.cpp
+
+!CONFIG(no-overlay) {
+	DEFINES *= USE_OVERLAY
+
+    HEADERS *= Overlay.h \
+        OverlayClient.h \
+        OverlayText.h \
+        OverlayUser.h \
+        OverlayUserGroup.h \
+        OverlayConfig.h \
+        OverlayEditor.h \
+        OverlayEditorScene.h \
+        PathListWidget.h \
+        OverlayPositionableItem.h
+
+    SOURCES *= Overlay.cpp \
+        OverlayClient.cpp \
+        OverlayText.cpp \
+        OverlayUser.cpp \
+        OverlayUserGroup.cpp \
+        OverlayConfig.cpp \
+        OverlayEditor.cpp \
+        OverlayEditorScene.cpp \
+        PathListWidget.cpp \
+        OverlayPositionableItem.cpp
+	
+    FORMS *= Overlay.ui \
+        OverlayEditor.ui
+}
+
 
 CONFIG(qtspeech) {
   SOURCES *= TextToSpeech.cpp
@@ -235,8 +251,6 @@ FORMS *= ConfigDialog.ui \
     ACLEditor.ui \
     Plugins.ui \
     PTTButtonWidget.ui \
-    Overlay.ui \
-    OverlayEditor.ui \
     LookConfig.ui \
     AudioInput.ui \
     AudioOutput.ui \
@@ -399,8 +413,13 @@ win32 {
   } else {
     RC_FILE = mumble.rc
   }
-  HEADERS *= GlobalShortcut_win.h Overlay_win.h TaskList.h UserLockFile.h
-  SOURCES *= GlobalShortcut_win.cpp Overlay_win.cpp SharedMemory_win.cpp Log_win.cpp os_win.cpp TaskList.cpp WinGUIDs.cpp ../../overlay/ods.cpp UserLockFile_win.cpp os_early_win.cpp
+  HEADERS *= GlobalShortcut_win.h TaskList.h UserLockFile.h
+  SOURCES *= GlobalShortcut_win.cpp SharedMemory_win.cpp Log_win.cpp os_win.cpp TaskList.cpp WinGUIDs.cpp ../../overlay/ods.cpp UserLockFile_win.cpp os_early_win.cpp
+
+  !CONFIG(no-overlay) {
+    HEADERS *= Overlay_win.h
+    SOURCES *= Overlay_win.cpp
+  }
 
   !CONFIG(qtspeech) {
     SOURCES *= TextToSpeech_win.cpp
@@ -522,9 +541,13 @@ unix {
       }
 
       LIBS += -framework ScriptingBridge
-      OBJECTIVE_SOURCES += Overlay_macx.mm
+	  !config(no-overlay) {
+	    OBJECTIVE_SOURCES += Overlay_macx.mm
+	  }
     } else {
-      SOURCES += Overlay_unix.cpp
+      !CONFIG(no-overlay) {
+        SOURCES += Overlay_unix.cpp
+      }
     }
 
     # CoreAudio
@@ -533,7 +556,11 @@ unix {
     HEADERS += CoreAudio.h
   } else {
     HEADERS *= GlobalShortcut_unix.h
-    SOURCES *= os_unix.cpp GlobalShortcut_unix.cpp Overlay_unix.cpp SharedMemory_unix.cpp Log_unix.cpp
+    SOURCES *= os_unix.cpp GlobalShortcut_unix.cpp SharedMemory_unix.cpp Log_unix.cpp
+
+    !CONFIG(no-overlay) {
+        SOURCES *= Overlay_unix.cpp
+    }
     
     !CONFIG(qtspeech) {
       SOURCES *= TextToSpeech_unix.cpp
